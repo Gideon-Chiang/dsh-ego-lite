@@ -8,13 +8,25 @@ Drive the **installed ego lite app** from DeepSeek Harness with 19 structured `e
 
 ## Install
 
+Published on npm as [dsh-ego-lite](https://www.npmjs.com/package/dsh-ego-lite).
+
 ```powershell
+# as a DSH plugin, from npm (recommended)
 dsh plugin --profile web add dsh-ego-lite
-# or
+
+# as a regular npm dependency in your own project
+npm install dsh-ego-lite
+
+# straight from GitHub
 dsh plugin --profile web add github:Gideon-Chiang/dsh-ego-lite
+
+# local development
+dsh plugin --profile web add file:C:/path/to/dsh-ego-lite
 ```
 
 Restart dsh afterwards (plugins are not hot-reloaded; the profile copy is a physical copy, so re-copy and restart after editing sources).
+
+> `dsh plugin` installs the package into the selected profile. If you only want it as a Node dependency, use `npm install dsh-ego-lite`; at runtime `@deepseek-ai/dsh-tools` is supplied by the DSH host (optional peer) and does not need to be installed separately.
 
 ## Requirements
 

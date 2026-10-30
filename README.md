@@ -22,11 +22,16 @@ ego lite 应用（TaskSpace / Page / CDP）
 
 ## 安装
 
+已发布到 npm：[dsh-ego-lite](https://www.npmjs.com/package/dsh-ego-lite)。
+
 ```powershell
-# npm（发布后）
+# 从 npm 安装为 DSH 插件（推荐）
 dsh plugin --profile web add dsh-ego-lite
 
-# 直接指向 GitHub
+# 作为普通 npm 依赖安装到你自己的项目
+npm install dsh-ego-lite
+
+# 直接从 GitHub 安装
 dsh plugin --profile web add github:Gideon-Chiang/dsh-ego-lite
 
 # 本地开发
@@ -34,6 +39,8 @@ dsh plugin --profile web add file:C:/path/to/dsh-ego-lite
 ```
 
 安装后**重启 dsh**（插件不支持热加载；profile 里的副本是复制，改源码后需重新复制并重启）。
+
+> `dsh plugin` 会把包安装进对应 profile；如果你只是想在 Node 项目里依赖它，用 `npm install dsh-ego-lite` 即可。运行时 `@deepseek-ai/dsh-tools` 由 DSH 宿主提供（optional peer），不需要单独安装。
 
 ## 前置条件
 
