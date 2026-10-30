@@ -62,5 +62,8 @@
                              },
     "devDependencies":  {
                             "@deepseek-ai/dsh-tools":  "^0.2.1-rc.2"
-                        }
+                        },
+    "publishConfig":  {
+                          "access":  "public"
+                      }
 }
