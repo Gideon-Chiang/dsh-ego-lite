@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 — 2026-10-31
+
+- 修复：`package.json` 带 UTF-8 BOM，导致 DSH 插件校验解析 JSON 失败（`dsh plugin add` 报 `SyntaxError: Unexpected token '﻿'`）。**0.1.0 无法被 DSH 安装，请使用 0.1.1。**
+
 ## 0.1.0 — 2026-10-31
 
 首个公开版本。
