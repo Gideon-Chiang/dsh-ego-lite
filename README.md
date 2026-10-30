@@ -1,0 +1,99 @@
+# dsh-ego-lite
+
+把**已安装的 ego lite 应用**接进 DeepSeek Harness：19 个结构化 `ego_app_*` 工具，全部走 ego 官方 `ego-browser` CLI，每次调用都落在**真实的 ego TaskSpace** 里（面板可见、可接管），用的是你应用自己的 profile 和登录态。
+
+- 不启动额外的 Chrome/Edge，不需要 CDP 端口，不需要浏览器扩展
+- 与 ego 官方 skill（`~/.agents/skills/ego-browser`）共用同一条 IPC 通道，可并存
+- 有参数校验、可读错误、以及踩过的 ego 语义边界的显式提示
+
+```
+agent 调用 ego_app_* 工具
+        ↓
+dsh-ego-lite（本插件，host 侧 cordis 插件）
+        ↓  写 UTF-8 .mjs → `ego-browser nodejs -e "await import(...)"`
+ego lite 应用（TaskSpace / Page / CDP）
+        ↓
+你的真实浏览器：你的标签、你的登录态
+```
+
+## 为什么不是 CDP 方案
+
+市面上的 ego 插件大多自带一个 Chromium 宿主，用 CDP 驱动 Chrome/Edge。它们在 ego 应用里**拿不到 Space**，因为 ego 应用不监听任何 CDP 端口（实测：ego 进程零 listening socket）。本插件直接对接应用自己的控制面，所以 Space 是原生的。
+
+## 安装
+
+```powershell
+# npm（发布后）
+dsh plugin --profile web add dsh-ego-lite
+
+# 直接指向 GitHub
+dsh plugin --profile web add github:Gideon-Chiang/dsh-ego-lite
+
+# 本地开发
+dsh plugin --profile web add file:C:/path/to/dsh-ego-lite
+```
+
+安装后**重启 dsh**（插件不支持热加载；profile 里的副本是复制，改源码后需重新复制并重启）。
+
+## 前置条件
+
+| 要求 | 说明 |
+|---|---|
+| ego lite 已安装并完成 onboarding | 提供 `ego-browser` CLI 与运行时 |
+| ego lite 正在运行 | CLI 通过 IPC 连接到正在运行的应用 |
+| DSH 能在本机执行命令 | 建议 `danger-full-access` / Full access |
+
+插件默认自动探测 `C:\Program Files\Citro Labs\ego lite\Application\<version>\ego-browser.exe`；可用配置项 `executable` 覆盖，或设置环境变量 `EGO_BROWSER_CLI`。
+
+## 工具（19 个）
+
+| 类别 | 工具 |
+|---|---|
+| 状态 | `ego_app_status`（CLI 路径、ego 版本、Space 列表、profile、app 级标签） |
+| Space | `ego_app_space`：`list` `open` `create` `use` `claim` `pages` `tabs` `open_page` `adopt` `release` `user_page` `wait_control` `handoff` `takeover` `finish` `complete` `mark_error` `set_state` `close` `delete` |
+| 标签 | `ego_app_tabs`（`scope: "app" | "space"`，可 `open`） |
+| 导航/观察 | `ego_app_navigate`、`ego_app_snapshot`（viewport / full_page）、`ego_app_screenshot` |
+| 交互 | `ego_app_click`、`ego_app_fill`、`ego_app_key`（press/type/insert_text/paste/down/up）、`ego_app_pointer`（hover/dblclick/drag/scroll/move/mouse_click/down/up）、`ego_app_select`、`ego_app_page`（reload/close/focus/events/file_chooser/fetch/wait_event） |
+| 等待 | `ego_app_wait`（selector / url / load_state / function / timeout） |
+| 脚本/协议 | `ego_app_js`、`ego_app_cdp`（page / task / app）、`ego_app_run`（任意官方脚本，逃生口） |
+| 其他 | `ego_app_dialog`（支持 `trigger` 同调用内点击并应答）、`ego_app_upload`、`ego_app_gesture` |
+
+## 典型用法
+
+```
+ego_app_space   { action: "open", name: "查订单" }
+ego_app_navigate{ name: "查订单", url: "https://example.com/orders" }
+ego_app_snapshot{ name: "查订单" }
+ego_app_fill    { name: "查订单", selector: "ref=3", value: "A123" }
+ego_app_click   { name: "查订单", selector: "loc=role:button[name='查询']" }
+ego_app_js      { name: "查订单", expression: "document.querySelector('#result').textContent" }
+```
+
+需要登录/验证码：`ego_app_space { action: "handoff", name: "查订单" }` 把控制权交给你，处理完再 `ego_app_space { action: "wait_control", ... }`。
+
+任意官方 API 都能通过 `ego_app_run` 使用（`taskSpace()`、`page.*`、`ego.*`、`fetch`）。
+
+## ego 语义边界（实测，已被工具显式处理）
+
+1. `task.finish({ keep })` 只接受 `"all"` 或页码数组 → 工具映射为 `keep: true/false` 或 `keepPages: ["p1"]`，并预校验标签是否存在。
+2. `handoff`/`takeover` 后控制权在用户，浏览器命令会被硬暂停 → 返回带 `hint` 的错误，指向 `wait_control`。
+3. `ego.createTaskSpace()` 之后必须 `useTaskSpace(id)` 才成为工作空间 → `create` 已内建。
+4. 新建空间没有 `p1` → 页面前导自动 `newPage()`。
+5. `mark_error` / `complete` 结束任务、归属翻回 `user`；同名 `open` 会返回结构化提示（附 id，建议 `claim` 或换名）。
+6. `deleteSpaces` 只删 user-owned；传 agent-owned 会挂起到超时 → `delete` 先查归属并给可读错误，另提供 `force`。
+7. **`agentDelegatedToUser` 空间（交还控制后）没有 API 能关闭**：`closeTaskSpace`/`claimTaskSpace`/`deleteSpaces` 均返回成功但不生效。需在 ego 面板手动关闭，或让用户先交还控制。
+8. 对话框跨 CLI 调用会被自动关闭 → `ego_app_dialog` 的 `trigger` 参数在同一调用内点击并应答，`handled` 取真实返回值。
+9. `page.fetch` 受浏览器 CORS 约束；`page.waitForEvent` 只支持 `popup` / `download`。
+10. agent 自己建的页面不能 `release`（只能 `close`）；用户页才需要 `adopt`。
+
+## 与官方 skill 的关系
+
+ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego-browser nodejs` 脚本，没有 MCP。本插件不替代它，只是把同一条 CLI 包成结构化工具，省 token、带校验；需要复杂流程时用 `ego_app_run` 写完整脚本，与官方写法一致。
+
+## 测试
+
+99 项矩阵（页面交互、等待、CDP、对话框、生命周期、交还控制）全部通过，含会话内实测。详见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)。
+
+## 许可
+
+MIT。ego lite 本体（Citro Labs）不在本仓库内，也不随本包分发。

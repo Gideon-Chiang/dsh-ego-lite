@@ -1,0 +1,6 @@
+# dsh-ego-lite: thin tools over the OFFICIAL ego lite CLI (`ego-browser nodejs`).
+# Unlike the CDP/host based plugins, this talks to the ego lite application
+# itself, so every call lands in a real ego TaskSpace visible in the app UI.
+- insert:
+    - id: ego-lite
+      name: "dsh-ego-lite"
