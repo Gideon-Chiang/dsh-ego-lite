@@ -78,7 +78,7 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 
 需要登录/验证码：`ego_app_space { action: "handoff", name: "查订单" }` 把控制权交给你，处理完再 `ego_app_space { action: "wait_control", ... }`。
 
-任意官方 API 都能通过 `ego_app_run` 使用（`taskSpace()`、`page.*`、`ego.*`、`fetch`）。
+任意官方 API 都能通过 `ego_app_run` 使用（`const task = await taskSpace(...)`、`await task.page('p1')`、`page.*`、`ego.*`、`fetch`）。注意 `taskSpace()` 返回 Promise，**必须 `await`**，否则会得到 `task.page is not a function`。
 
 ## ego 语义边界（实测，已被工具显式处理）
 
@@ -92,6 +92,9 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 8. 对话框跨 CLI 调用会被自动关闭 → `ego_app_dialog` 的 `trigger` 参数在同一调用内点击并应答，`handled` 取真实返回值。
 9. `page.fetch` 受浏览器 CORS 约束；`page.waitForEvent` 只支持 `popup` / `download`。
 10. agent 自己建的页面不能 `release`（只能 `close`）；用户页才需要 `adopt`。
+11. `takeover` 的官方 API 是 `takeOverTaskSpace(spaceId)`，**必须带 id**；无参调用不切控制权却也不报错。工具现已按 id 调用并回读 `ownership` 校验。已 `finish` 且保留了页面的空间无法 `takeover`，只能 `claim`（需用户同意）。
+12. `drag` 走原生 HTML5 拖放：**源元素必须 `draggable="true"`**，否则 `page.dragAndDrop()` 返回成功但页面没有任何事件（工具层看不出来，用 `ego_app_js` 回读真实状态验证）。
+13. onboarding 未完成时 CLI 打印提示并**以退出码 0 退出**，不执行脚本也不产出结果 → 工具据此判定为失败并给出 hint，不会返回 `{ok:true, data:null}`。
 
 ## 与官方 skill 的关系
 
@@ -100,6 +103,8 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 ## 测试
 
 99 项矩阵（页面交互、等待、CDP、对话框、生命周期、交还控制）全部通过，含会话内实测。详见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)。
+
+0.1.2 起，CLI 输出判定（含 onboarding 预检、无哨兵、坏哨兵）有 first-class 回归测试：`npm test`（9 项）。真实应用上的补测记录见 [docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)。
 
 ## 许可
 
