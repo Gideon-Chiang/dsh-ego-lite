@@ -1,6 +1,6 @@
 # dsh-ego-lite
 
-把**已安装的 ego lite 应用**接进 DeepSeek Harness：19 个结构化 `ego_app_*` 工具，全部走 ego 官方 `ego-browser` CLI，每次调用都落在**真实的 ego TaskSpace** 里（面板可见、可接管），用的是你应用自己的 profile 和登录态。
+把**已安装的 ego lite 应用**接进 DeepSeek Harness：20 个结构化 `ego_app_*` 工具，全部走 ego 官方 `ego-browser` CLI，每次调用都落在**真实的 ego TaskSpace** 里（面板可见、可接管），用的是你应用自己的 profile 和登录态。
 
 - 不启动额外的 Chrome/Edge，不需要 CDP 端口，不需要浏览器扩展
 - 与 ego 官方 skill（`~/.agents/skills/ego-browser`）共用同一条 IPC 通道，可并存
@@ -52,7 +52,7 @@ dsh plugin --profile web add file:C:/path/to/dsh-ego-lite
 
 插件默认自动探测 `C:\Program Files\Citro Labs\ego lite\Application\<version>\ego-browser.exe`；可用配置项 `executable` 覆盖，或设置环境变量 `EGO_BROWSER_CLI`。
 
-## 工具（19 个）
+## 工具（20 个）
 
 | 类别 | 工具 |
 |---|---|
@@ -63,7 +63,8 @@ dsh plugin --profile web add file:C:/path/to/dsh-ego-lite
 | 交互 | `ego_app_click`、`ego_app_fill`、`ego_app_key`（press/type/insert_text/paste/down/up）、`ego_app_pointer`（hover/dblclick/drag/scroll/move/mouse_click/down/up）、`ego_app_select`、`ego_app_page`（reload/close/focus/events/file_chooser/fetch/wait_event） |
 | 等待 | `ego_app_wait`（selector / url / load_state / function / timeout） |
 | 脚本/协议 | `ego_app_js`、`ego_app_cdp`（page / task / app）、`ego_app_run`（任意官方脚本，逃生口） |
-| 其他 | `ego_app_dialog`（支持 `trigger` 同调用内点击并应答）、`ego_app_upload`、`ego_app_gesture` |
+| 文件 | `ego_app_upload`（直接设 file input）、`ego_app_download`（先 arm `waitForEvent(download)` 再点击并 `saveAs` 落盘） |
+| 其他 | `ego_app_dialog`（支持 `trigger` 同调用内点击并应答）、`ego_app_gesture` |
 
 ## 典型用法
 
@@ -89,12 +90,14 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 5. `mark_error` / `complete` 结束任务、归属翻回 `user`；同名 `open` 会返回结构化提示（附 id，建议 `claim` 或换名）。
 6. `deleteSpaces` 只删 user-owned；传 agent-owned 会挂起到超时 → `delete` 先查归属并给可读错误，另提供 `force`。
 7. **`agentDelegatedToUser` 空间（交还控制后）没有 API 能关闭**：`closeTaskSpace`/`claimTaskSpace`/`deleteSpaces` 均返回成功但不生效。需在 ego 面板手动关闭，或让用户先交还控制。
-8. 对话框跨 CLI 调用会被自动关闭 → `ego_app_dialog` 的 `trigger` 参数在同一调用内点击并应答，`handled` 取真实返回值。
+8. `ego_app_dialog` 的 `trigger` 参数在同一调用内点击并应答，`handled` 取真实返回值（跨调用的行为见第 14 条）。
 9. `page.fetch` 受浏览器 CORS 约束；`page.waitForEvent` 只支持 `popup` / `download`。
 10. agent 自己建的页面不能 `release`（只能 `close`）；用户页才需要 `adopt`。
 11. `takeover` 的官方 API 是 `takeOverTaskSpace(spaceId)`，**必须带 id**；无参调用不切控制权却也不报错。工具现已按 id 调用并回读 `ownership` 校验。已 `finish` 且保留了页面的空间无法 `takeover`，只能 `claim`（需用户同意）。
 12. `drag` 走原生 HTML5 拖放：**源元素必须 `draggable="true"`**，否则 `page.dragAndDrop()` 返回成功但页面没有任何事件（工具层看不出来，用 `ego_app_js` 回读真实状态验证）。
 13. onboarding 未完成时 CLI 打印提示并**以退出码 0 退出**，不执行脚本也不产出结果 → 工具据此判定为失败并给出 hint，不会返回 `{ok:true, data:null}`。
+14. `receipt.dialog` 报出的对话框必须**紧接着**用 `ego_app_dialog` 应答：实测 0.6.2.5 里未应答的对话框会跨调用残留，该页后续每轮都报 `PageDialogOpenedError`（guide 的"跨轮自动关闭"在此版本不成立）。
+15. 下载必须在**同一脚本内** `saveAs()`：临时文件随该轮结束删除 → `ego_app_download` 已内建。
 
 ## 与官方 skill 的关系
 
@@ -104,7 +107,10 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 
 99 项矩阵（页面交互、等待、CDP、对话框、生命周期、交还控制）全部通过，含会话内实测。详见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)。
 
-0.1.2 起，CLI 输出判定（含 onboarding 预检、无哨兵、坏哨兵）有 first-class 回归测试：`npm test`（9 项）。真实应用上的补测记录见 [docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)。
+0.1.2 起，CLI 输出判定（含 onboarding 预检、无哨兵、坏哨兵）有 first-class 回归测试：`npm test`（9 项）。
+0.1.3 起 `node test/live-e2e.mjs` 有 23 项真实应用集成检查（回执、下载、文件选择器、子树快照、富粘贴、指针按键等），
+需要 ego lite 在运行；测试页默认指向本机 `ego-tools-test2.html`，可用 `EGO_E2E_FIXTURE` 覆盖。
+调查与复验记录见 [docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)。
 
 ## 许可
 

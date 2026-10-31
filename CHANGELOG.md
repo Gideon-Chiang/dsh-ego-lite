@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.3 — 2026-11-01
+
+补 bug 版：按官方 guide v2.2.0 补齐四类"官方有、工具拿不到"的缺口（独立调查员报告逐条核验通过）。没有不兼容变更，全部是新增可选参数 + 一个新增工具。
+
+- **动作回执（action receipts）不再丢弃**：`page.click/fill/press/selectOption/dblclick/hover/dragAndDrop/setInputFiles`
+  的返回值现在会被序列化成 `receipt: { popups?: [{label,targetId}], dialog?: {type,message,defaultPrompt} }`
+  一并返回。点开新页/弹出对话框当场就能看到目标，不必再"点两次"兜底。
+  实测 0.6.2.5 的 `receipt.dialog` 是普通对象（`{type,message,...}` 属性），不是方法，已同时兼容两种形态。
+- **下载接通**：新增第 20 个工具 `ego_app_download`（先 arm `waitForEvent(download)`，再点 trigger，最后 `download.saveAs()`；
+  返回 `saved`/`suggestedFilename`/`url`）。`ego_app_page{action:'wait_event', event:'download'}` 也支持 `saveAs`，
+  不再把事件对象 `String()` 掉；`event:'popup'` 返回 `{label,targetId}` 而不是字符串。
+- **文件选择器可落文件**：`ego_app_page{action:'file_chooser'}` 支持 `trigger`（先 arm 再点击）与 `files`
+  （传给 `chooser.setFiles()`），并回传上传触发的 `dialog`。
+- **`snapshot` 子树**：`ego_app_snapshot{scope:'subtree', root:'@12'}` 聚焦 iframe 子树（`root` 必填校验）。
+- **富文本粘贴**：`ego_app_key{action:'paste', html:'<table>…'}` 走官方 `keyboard.paste({text, html})`。
+- **`adopt` 支持 `{as}`**：`ego_app_space{action:'adopt', as:'name'}`。
+- **修 bug**：`ego_app_pointer` 的 `button` 之前不在 schema 里，right/middle **永远传不进去**；现在已声明，
+  `mouse_click` 还支持用纯 CSS 选择器点击元素中心，`down`/`up` 也补进 action 说明。
+- 文档：新增实测语义——`receipt.dialog` 报出的对话框**必须立刻用 `ego_app_dialog` 应答**，
+  否则该页后续每一轮都会被 `PageDialogOpenedError` 挡住（0.6.2.5 实测，与 guide 的"跨轮自动关闭"不完全一致）。
+
 ## 0.1.2 — 2026-10-31
 
 修复实测发现的 3 个 bug，并补上 first-class 回归测试（`npm test`，9 项）。

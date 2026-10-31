@@ -79,6 +79,89 @@ check(
 	{ ok: again.ok, error: (again.error ?? "").slice(0, 160) }
 );
 
+// ── 0.1.3: receipts, downloads, chooser, subtree, rich paste, pointer buttons ──
+const fixturePath = process.env.EGO_E2E_FIXTURE ?? "C:/Users/Chiang/Desktop/Temp_Project/Default/ego-tools-test2.html";
+const fixture = "file:///" + fixturePath;
+const advanced = await call("ego_app_space", { action: "open", name: "e2e-进阶" });
+const advId = advanced.spaceId;
+const nav = await call("ego_app_navigate", { name: "e2e-进阶", url: fixture });
+check("advanced fixture opens", nav.ok === true && /ego-tools-test2/.test(nav.url ?? ""), { ok: nav.ok });
+
+const rightClick = await call("ego_app_pointer", { action: "mouse_click", name: "e2e-进阶", selector: "#ctx", button: "right", x: 0, y: 0 });
+const ctxCount = await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('ctxOut').textContent" });
+check(
+	"pointer button=right reaches the page",
+	rightClick.ok === true && Number(ctxCount.value) > 0,
+	{ ok: rightClick.ok, contextmenu: ctxCount.value, receipt: rightClick.receipt ?? null }
+);
+
+const popupClick = await call("ego_app_click", { name: "e2e-进阶", selector: "#popup" });
+check(
+	"click receipt reports the popup",
+	popupClick.ok === true && Array.isArray(popupClick.receipt?.popups) && popupClick.receipt.popups.length > 0,
+	{ ok: popupClick.ok, receipt: popupClick.receipt ?? null }
+);
+
+const alertClick = await call("ego_app_click", { name: "e2e-进阶", selector: "#alertBtn" });
+check(
+	"click receipt reports the dialog",
+	alertClick.ok === true && alertClick.receipt?.dialog?.type === "alert" && /receipt dialog/.test(String(alertClick.receipt?.dialog?.message ?? "")),
+	{ ok: alertClick.ok, receipt: alertClick.receipt ?? null }
+);
+// An open dialog blocks every later round on that page: answer it before continuing.
+const dismissed = await call("ego_app_dialog", { action: "accept", name: "e2e-进阶" });
+check("the reported dialog is answerable with ego_app_dialog", dismissed.ok === true && dismissed.handled === true, dismissed);
+
+const downloaded = await call("ego_app_download", {
+	name: "e2e-进阶",
+	trigger: "#dl",
+	saveAs: "C:/Users/Chiang/Desktop/Temp_Project/Default/ego-download-result.txt"
+});
+const fsHas = await import("node:fs");
+const savedOk = downloaded.ok === true && fsHas.existsSync("C:/Users/Chiang/Desktop/Temp_Project/Default/ego-download-result.txt");
+check("ego_app_download saves the artifact", savedOk, { ok: downloaded.ok, download: downloaded.download ?? null, saved: downloaded.saved });
+
+const chooser = await call("ego_app_page", {
+	action: "file_chooser",
+	name: "e2e-进阶",
+	trigger: "#pick",
+	files: ["C:/Users/Chiang/Desktop/Temp_Project/Default/ego-upload-fixture.txt"]
+});
+const fileOut = await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('fileOut').textContent" });
+check(
+	"file_chooser sets files from a click trigger",
+	chooser.ok === true && /ego-upload-fixture\.txt/.test(String(fileOut.value ?? "")),
+	{ ok: chooser.ok, echoed: fileOut.value, files: chooser.files }
+);
+
+await call("ego_app_page", { action: "focus", name: "e2e-进阶", selector: "#editable" });
+const pasted = await call("ego_app_key", {
+	action: "paste",
+	name: "e2e-进阶",
+	text: "Name	Status",
+	html: "<table><tr><td>Name</td><td>Status</td></tr></table>"
+});
+const richHtml = await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('editable').innerHTML" });
+check(
+	"keyboard paste keeps the HTML flavour",
+	pasted.ok === true && /<table/i.test(String(richHtml.value ?? "")),
+	{ ok: pasted.ok, html: String(richHtml.value ?? "").slice(0, 80) }
+);
+
+const view = await call("ego_app_snapshot", { name: "e2e-进阶", scope: "viewport" });
+const iframeRef = /iframe \[ref=(\d+)/.exec(String(view.snapshot ?? ""));
+const subtree = iframeRef
+	? await call("ego_app_snapshot", { name: "e2e-进阶", scope: "subtree", root: `@${iframeRef[1]}` })
+	: { ok: false, error: "no iframe ref in viewport snapshot" };
+check(
+	"snapshot subtree reaches inside the iframe",
+	subtree.ok === true && /inside frame/.test(String(subtree.snapshot ?? "")),
+	{ ok: subtree.ok, ref: iframeRef ? `@${iframeRef[1]}` : null, error: subtree.error ? String(subtree.error).slice(0, 120) : undefined }
+);
+
+const advFinish = await call("ego_app_space", { action: "finish", name: "e2e-进阶", keep: false });
+check("advanced space finishes cleanly", advFinish.ok === true, advFinish);
+
 const failed = results.filter((row) => !row.ok);
 console.log(`\n=== ${results.length - failed.length}/${results.length} passed ===`);
 process.exitCode = failed.length === 0 ? 0 : 1;

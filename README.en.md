@@ -1,6 +1,6 @@
 # dsh-ego-lite
 
-Drive the **installed ego lite app** from DeepSeek Harness with 19 structured `ego_app_*` tools. Every call runs through the official `ego-browser` CLI and lands inside a real ego TaskSpace — visible in the app's Space panel, using the app's own profile and logins.
+Drive the **installed ego lite app** from DeepSeek Harness with 20 structured `ego_app_*` tools. Every call runs through the official `ego-browser` CLI and lands inside a real ego TaskSpace — visible in the app's Space panel, using the app's own profile and logins.
 
 - No second Chromium, no CDP port, no browser extension
 - Coexists with the official `ego-browser` skill (same IPC channel)
