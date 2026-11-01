@@ -4,6 +4,9 @@
  */
 // Opt-in: needs the ego lite app running, past onboarding. Not part of `npm test`.
 //   node test/live-e2e.mjs
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { apply } from "../lib/index.js";
 
 const tools = new Map();
@@ -14,6 +17,9 @@ const ctx = {
 apply(ctx, { executable: "auto", timeoutMs: 180000, maxOutputBytes: 1048576, announceToAgent: false });
 
 const call = (name, args = {}) => tools.get(name).execute(args, {});
+const fixtures = new URL("./fixtures/", import.meta.url);
+const uploadFixture = fileURLToPath(new URL("upload-fixture.txt", fixtures)).split("\\").join("/");
+const downloadTarget = path.join(tmpdir(), "ego-live-e2e-download.txt").split("\\").join("/");
 const results = [];
 const check = (label, ok, detail) => {
 	results.push({ label, ok, detail });
@@ -80,14 +86,14 @@ check(
 );
 
 // ── 0.1.3: receipts, downloads, chooser, subtree, rich paste, pointer buttons ──
-const fixturePath = process.env.EGO_E2E_FIXTURE ?? "C:/Users/Chiang/Desktop/Temp_Project/Default/ego-tools-test2.html";
-const fixture = "file:///" + fixturePath;
+const fixturePath = process.env.EGO_E2E_FIXTURE ?? fileURLToPath(new URL("./fixtures/interaction.html", import.meta.url));
+const fixture = "file:///" + fixturePath.split("\\").join("/");
 const advanced = await call("ego_app_space", { action: "open", name: "e2e-进阶" });
 const advId = advanced.spaceId;
 const nav = await call("ego_app_navigate", { name: "e2e-进阶", url: fixture });
-check("advanced fixture opens", nav.ok === true && /ego-tools-test2/.test(nav.url ?? ""), { ok: nav.ok });
+check("advanced fixture opens", nav.ok === true && /interaction\.html/.test(nav.url ?? ""), { ok: nav.ok });
 
-const rightClick = await call("ego_app_pointer", { action: "mouse_click", name: "e2e-进阶", selector: "#ctx", button: "right", x: 0, y: 0 });
+const rightClick = await call("ego_app_pointer", { action: "mouse_click", name: "e2e-进阶", selector: "#ctx", button: "right", timeoutMs: 8000 });
 const ctxCount = await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('ctxOut').textContent" });
 check(
 	"pointer button=right reaches the page",
@@ -95,7 +101,7 @@ check(
 	{ ok: rightClick.ok, contextmenu: ctxCount.value, receipt: rightClick.receipt ?? null }
 );
 
-const popupClick = await call("ego_app_click", { name: "e2e-进阶", selector: "#popup" });
+const popupClick = await call("ego_app_click", { name: "e2e-进阶", selector: "#pop" });
 check(
 	"click receipt reports the popup",
 	popupClick.ok === true && Array.isArray(popupClick.receipt?.popups) && popupClick.receipt.popups.length > 0,
@@ -115,26 +121,45 @@ check("the reported dialog is answerable with ego_app_dialog", dismissed.ok === 
 const downloaded = await call("ego_app_download", {
 	name: "e2e-进阶",
 	trigger: "#dl",
-	saveAs: "C:/Users/Chiang/Desktop/Temp_Project/Default/ego-download-result.txt"
+	saveAs: downloadTarget
 });
 const fsHas = await import("node:fs");
-const savedOk = downloaded.ok === true && fsHas.existsSync("C:/Users/Chiang/Desktop/Temp_Project/Default/ego-download-result.txt");
+const savedOk = downloaded.ok === true && fsHas.existsSync(downloadTarget);
 check("ego_app_download saves the artifact", savedOk, { ok: downloaded.ok, download: downloaded.download ?? null, saved: downloaded.saved });
 
 const chooser = await call("ego_app_page", {
 	action: "file_chooser",
 	name: "e2e-进阶",
 	trigger: "#pick",
-	files: ["C:/Users/Chiang/Desktop/Temp_Project/Default/ego-upload-fixture.txt"]
+	timeoutMs: 8000,
+	files: [uploadFixture]
 });
 const fileOut = await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('fileOut').textContent" });
 check(
 	"file_chooser sets files from a click trigger",
-	chooser.ok === true && /ego-upload-fixture\.txt/.test(String(fileOut.value ?? "")),
+	chooser.ok === true && /upload-fixture\.txt/.test(String(fileOut.value ?? "")),
 	{ ok: chooser.ok, echoed: fileOut.value, files: chooser.files }
 );
+check(
+	"file_chooser reports a real isMultiple() boolean",
+	chooser.ok === true && chooser.multiple === false,
+	{ multiple: chooser.multiple }
+);
+check(
+	"file_chooser dialog is not double-wrapped",
+	chooser.ok === true && (chooser.dialog === null || chooser.dialog?.dialog === undefined),
+	{ dialog: chooser.dialog }
+);
 
-await call("ego_app_page", { action: "focus", name: "e2e-进阶", selector: "#editable" });
+// receipt must be absent (API returned nothing) or an object, never null
+const filled = await call("ego_app_fill", { name: "e2e-进阶", selector: "#editable", value: "x", timeoutMs: 8000 });
+check(
+	"an action receipt is an object when present, never null",
+	filled.ok === true && (filled.receipt === undefined || (typeof filled.receipt === "object" && filled.receipt !== null)),
+	{ ok: filled.ok, receipt: filled.receipt }
+);
+
+await call("ego_app_page", { action: "focus", name: "e2e-进阶", selector: "#editable", timeoutMs: 8000 });
 const pasted = await call("ego_app_key", {
 	action: "paste",
 	name: "e2e-进阶",

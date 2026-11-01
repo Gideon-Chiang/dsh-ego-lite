@@ -37,7 +37,7 @@ The CLI is auto-detected under `C:\Program Files\Citro Labs\ego lite\Application
 
 ## Tool surface
 
-`ego_app_status`, `ego_app_space` (list/open/create/use/claim/pages/tabs/open_page/adopt/release/user_page/wait_control/handoff/takeover/finish/complete/mark_error/set_state/close/delete), `ego_app_tabs`, `ego_app_navigate`, `ego_app_snapshot`, `ego_app_screenshot`, `ego_app_click`, `ego_app_fill`, `ego_app_key`, `ego_app_pointer`, `ego_app_select`, `ego_app_page`, `ego_app_wait`, `ego_app_js`, `ego_app_cdp`, `ego_app_dialog`, `ego_app_upload`, `ego_app_gesture`, `ego_app_run`.
+`ego_app_status`, `ego_app_space` (list/open/create/use/claim/pages/tabs/open_page/adopt/release/user_page/wait_control/handoff/takeover/finish/complete/mark_error/set_state/close/delete), `ego_app_tabs`, `ego_app_navigate`, `ego_app_snapshot`, `ego_app_screenshot`, `ego_app_click`, `ego_app_fill`, `ego_app_key`, `ego_app_pointer`, `ego_app_select`, `ego_app_page`, `ego_app_wait`, `ego_app_js`, `ego_app_cdp`, `ego_app_dialog`, `ego_app_upload`, `ego_app_download`, `ego_app_gesture`, `ego_app_run`.
 
 ## Known ego semantics (handled by the tools)
 

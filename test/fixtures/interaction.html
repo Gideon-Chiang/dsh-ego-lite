@@ -1,0 +1,100 @@
+<!doctype html>
+<!--
+  Interaction fixture for dsh-ego-lite live regression (test/live-e2e.mjs).
+
+  Every check the harness makes reads real DOM state or the recorded click log
+  below, so a tool that returns ok:true without doing the work still fails.
+-->
+<meta charset="utf-8">
+<title>ego interaction fixture</title>
+<style>
+  body { font: 14px/1.6 system-ui; margin: 20px; max-width: 900px; }
+  section { border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin: 10px 0; }
+  code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+  #ctx { width: 220px; height: 60px; background: #e8f0fe; border: 2px dashed #7aa7ff;
+         display: flex; align-items: center; justify-content: center; user-select: none; }
+  #editable { min-height: 60px; border: 1px dashed #888; padding: 6px; }
+  iframe { width: 100%; height: 120px; border: 1px solid #ccc; }
+  .spacer { height: 900px; }
+</style>
+
+<h1>ego interaction fixture</h1>
+
+<section>
+  <h2>click coordinates</h2>
+  <!-- Deliberately away from (0,0): a tool that falls back to x??0,y??0 is caught here. -->
+  <button id="target">click target</button>
+  <div>last click: <code id="lastClick">(none)</code></div>
+  <div>click count: <code id="clickCount">0</code></div>
+</section>
+
+<section>
+  <h2>right click</h2>
+  <div id="ctx">right-click me</div>
+  <div>contextmenu <code id="ctxOut">0</code> · auxclick <code id="auxOut">0</code></div>
+</section>
+
+<section>
+  <h2>popup / alert</h2>
+  <a id="pop" href="https://example.com" target="_blank">open popup</a>
+  <button id="alertBtn">alert me</button>
+  <code id="dlgOut">(none)</code>
+</section>
+
+<section>
+  <h2>download</h2>
+  <a id="dl" href="data:text/plain;charset=utf-8,hello-from-ego-download" download="ego-dl.txt">download txt</a>
+</section>
+
+<section>
+  <h2>file chooser</h2>
+  <button id="pick">pick a file</button>
+  <input type="file" id="hiddenFile" style="display:none">
+  <code id="fileOut">(none)</code>
+</section>
+
+<section>
+  <h2>rich paste</h2>
+  <div id="editable" contenteditable="true">paste here:</div>
+</section>
+
+<section>
+  <h2>iframe subtree</h2>
+  <iframe id="frame" srcdoc="<html><body><h3>inside frame</h3><button id='innerbtn'>inner action</button></body></html>"></iframe>
+</section>
+
+<section>
+  <h2>below the fold</h2>
+  <p>ego's default action timeout (~3s) is not enough for elements far below the viewport;
+     give <code>timeoutMs</code> on long pages.</p>
+</section>
+
+<div class="spacer"></div>
+<button id="rc">far right-click target</button>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const bump = (id) => { $(id).textContent = String(Number($(id).textContent) + 1); };
+
+  // Record every real click so the harness can prove where the pointer landed.
+  window.__clicks = [];
+  document.addEventListener("click", (event) => {
+    window.__clicks.push({ x: event.clientX, y: event.clientY, target: event.target && event.target.id });
+    $("lastClick").textContent = event.clientX + "," + event.clientY;
+    bump("clickCount");
+  }, true);
+
+  $("ctx").addEventListener("contextmenu", (event) => { event.preventDefault(); bump("ctxOut"); });
+  $("ctx").addEventListener("auxclick", () => bump("auxOut"));
+  $("rc").addEventListener("contextmenu", (event) => { event.preventDefault(); bump("ctxOut"); });
+
+  $("alertBtn").addEventListener("click", () => {
+    alert("receipt dialog");
+    $("dlgOut").textContent = "after alert";
+  });
+
+  $("pick").addEventListener("click", () => $("hiddenFile").click());
+  $("hiddenFile").addEventListener("change", () => {
+    $("fileOut").textContent = Array.from($("hiddenFile").files).map((f) => f.name).join(",") || "(none)";
+  });
+</script>

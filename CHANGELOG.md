@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.4 — 2026-11-01
+
+修复 0.1.3 引入的 1 个高危缺陷 + 核验报告里的字段/描述/超时问题。
+
+- **高危修复：`ego_app_pointer{mouse_click}` 静默点到 (0,0)。** 0.1.3 会把 `@N`/`ref=`/`loc=`/`xpath=`
+  判定为"非纯 CSS"后**清空并按 `x??0,y??0` 点击**，返回 `ok:true` —— 而 (0,0) 是真实可点位置。
+  现在这类选择器**直接报错**并指向 `ego_app_click{selector, button}`；`selector` 与 `x/y` 同时给也会报错；
+  `mouse_click` 只接受 x/y 或一个纯 CSS 选择器，两者都没有则报错。`action` 拼错不再回落到坐标点击。
+- **`file_chooser` 结果字段修复**：`multiple` 改用官方 `isMultiple()`（之前读不存在的 `.multiple`，恒为 null）；
+  `dialog` 不再双层嵌套。
+- **文件选择器在长页面上打不开**：ego 需要滚动时退化为程序化 click，Chromium 不弹选择框 →
+  file_chooser / download / wait_event 对**纯 CSS** trigger 先 `scrollIntoView` 再点击。
+- **错误路径不再丢回执**：chooser / download 超时抛错时，错误信息里带上点击回执（能看出是不是被 alert 挡住）。
+- **`fill` 支持 `timeoutMs`**；`file_chooser`/`download`/`wait_event` 的 trigger 点击也透传该超时；
+  `wait_event` 未给超时时默认 30 s（此前不发 options，会挂到插件级 180 s）。
+- **描述修正**：`ego_app_dialog` 不再声称"跨调用自动关闭"（实测相反：未应答对话框会卡死后续每一轮）；
+  `click`/`fill`/`key`/`select`/`pointer`/`upload`/`download` 的描述里说明会返回 `receipt`。
+- **回执语义**：API 没给回执 → 省略该键；给了但没有 popup/dialog → `{}`（不再一律 `null`）。
+- **`page` 未知 action 报错**（不再静默 `reload`）；`snapshot` 未知 `scope` 报错、非 subtree 传 `root` 报错、
+  回显 `scope: "viewport"` 而不是内部值 `only_within_viewport`。
+- 测试：`test/fixtures/interaction.html`（带点击坐标捕获）入库，`live-e2e` 改用仓库内 fixture，
+  `EGO_E2E_FIXTURE` 可覆盖；下载落到系统临时目录。新增 `test/pointer-selector.mjs`（11 项）锁定本次高危缺陷。
+- 文档：README 语义边界补第 16/17 条（约 3 s 默认超时不够用、文件选择器需要用户激活的点击），
+  并修正第 14 条的错误名（`PageEvaluationTimeoutError`，不是 `PageDialogOpenedError`）。
+  更正 0.1.3 条目里"没有不兼容变更"的说法：`file_chooser` 的结果字段与 `wait_event` 的 `popup` 改名属于行为变化。
+
 ## 0.1.3 — 2026-11-01
 
 补 bug 版：按官方 guide v2.2.0 补齐四类"官方有、工具拿不到"的缺口（独立调查员报告逐条核验通过）。没有不兼容变更，全部是新增可选参数 + 一个新增工具。
