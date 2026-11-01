@@ -24,6 +24,13 @@ const check = (label, ok, detail) => {
 	console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  ${JSON.stringify(detail).slice(0, 220)}` : ""}`);
 };
 
+// Opt-in live test: without the app there is nothing to regression-test.
+const status = await call("ego_app_status");
+if (!status.ok || !status.data) {
+	console.log("SKIP  ego lite is not running (or has not finished onboarding); start it and rerun: node test/pointer-selector.mjs");
+	process.exit(0);
+}
+
 const opened = await call("ego_app_space", { action: "open", name: "pointer-回归" });
 if (!opened.ok) {
 	console.error("cannot open a TaskSpace:", opened.error);

@@ -145,10 +145,37 @@ check(
 	chooser.ok === true && chooser.multiple === false,
 	{ multiple: chooser.multiple }
 );
+// Shape guard only: this fixture never raises an upload-triggered dialog, so the
+// assertion can only catch a regression back to { dialog: { dialog: ... } }.
 check(
-	"file_chooser dialog is not double-wrapped",
+	"file_chooser dialog field is never double-wrapped (shape guard)",
 	chooser.ok === true && (chooser.dialog === null || chooser.dialog?.dialog === undefined),
 	{ dialog: chooser.dialog }
+);
+
+// A chooser that never opens must still name the click's dialog, and answering
+// that dialog must restore the page.
+const blockedChooser = await call("ego_app_page", {
+	action: "file_chooser", name: "e2e-进阶", trigger: "#alertBtn", timeoutMs: 2500, files: [uploadFixture]
+});
+check(
+	"file_chooser timeout carries the click receipt",
+	blockedChooser.ok === false && /click receipt/.test(String(blockedChooser.error ?? "")) && /"alert"/.test(String(blockedChooser.error ?? "")),
+	{ ok: blockedChooser.ok, error: String(blockedChooser.error ?? "").slice(0, 160) }
+);
+check(
+	"file_chooser timeout hint points at the blocking dialog",
+	/ego_app_dialog/.test(String(blockedChooser.error ?? "")),
+	{ matched: /ego_app_dialog/.test(String(blockedChooser.error ?? "")) }
+);
+const answered = await call("ego_app_dialog", { action: "accept", name: "e2e-进阶" });
+const afterTimeout = await call("ego_app_page", {
+	action: "file_chooser", name: "e2e-进阶", trigger: "#pick", timeoutMs: 8000, files: [uploadFixture]
+});
+check(
+	"chooser works again after answering the reported dialog",
+	answered.ok === true && answered.handled === true && afterTimeout.ok === true && afterTimeout.multiple === false,
+	{ answered: answered.ok, ok: afterTimeout.ok }
 );
 
 // receipt must be absent (API returned nothing) or an object, never null

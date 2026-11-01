@@ -1,6 +1,6 @@
 {
     "name": "dsh-ego-lite",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "description": "Drive the installed ego lite app from DeepSeek Harness: 20 structured ego_app_* tools over the official ego-browser CLI, running inside real ego TaskSpaces.",
     "type": "module",
     "main": "lib/index.js",
@@ -18,7 +18,8 @@
         "docs"
     ],
     "scripts": {
-        "test": "node --test \"test/**/*.test.mjs\""
+        "test": "node --test \"test/**/*.test.mjs\"",
+        "test:live": "node test/live-e2e.mjs && node test/pointer-selector.mjs"
     },
     "keywords": [
         "dsh-plugin",

@@ -109,10 +109,15 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 
 99 项矩阵（页面交互、等待、CDP、对话框、生命周期、交还控制）全部通过，含会话内实测。详见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)。
 
-0.1.2 起，CLI 输出判定（含 onboarding 预检、无哨兵、坏哨兵）有 first-class 回归测试：`npm test`（9 项）。
-0.1.3 起 `node test/live-e2e.mjs` 有 23 项真实应用集成检查（回执、下载、文件选择器、子树快照、富粘贴、指针按键等），
-需要 ego lite 在运行；测试页默认指向本机 `ego-tools-test2.html`，可用 `EGO_E2E_FIXTURE` 覆盖。
-调查与复验记录见 [docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)。
+- `npm test` —— 不需要 ego lite：CLI 输出判定（onboarding 预检、无哨兵、坏哨兵、非零退出等）9 项。
+- `npm run test:live` —— 需要 ego lite 在运行、已完成 onboarding：
+  - `test/live-e2e.mjs`（29 项）：动作回执、下载落盘、文件选择器超时与恢复、子树快照、富粘贴、指针右键等。
+  - `test/pointer-selector.mjs`（11 项）：`mouse_click` 只接受 x/y 或纯 CSS 选择器，ref/loc= 必须报错而不是点 (0,0)。
+
+测试页在 `test/fixtures/interaction.html`（带点击坐标捕获），可用 `EGO_E2E_FIXTURE` 指向别处；
+ego lite 未运行时 live 测试会打印 SKIP 并以 0 退出。
+
+历史记录见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md) 与 [docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)。
 
 ## 许可
 

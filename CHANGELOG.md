@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.5 — 2026-11-01
+
+修复 0.1.4 核验报告里的 2 个 file_chooser 残留问题 + 3 处描述/测试缺口。
+
+- **R1 修复：`file_chooser` 超时丢回执。** 0.1.4 的 CHANGELOG 说 chooser 与 download 都带回了点击回执，
+  实际只改了 download（chooser 的 await 没包 try/catch）——本版本补上。现在点击一个只弹 alert 的 trigger，
+  报错是：`page.waitForFileChooser timed out … | click receipt: {"dialog":{"type":"alert","message":…}}
+  | the click opened a dialog (alert): answer it with ego_app_dialog{action:'accept'} …`。
+- **R2 定性并处理：超时后页面"打不开选择框"的真正原因是那个未被应答的对话框，不是拦截残留。**
+  实测：alert 触发 → chooser 超时 → 页面被弹窗挡住，后续每次 `waitForFileChooser` 都超时；
+  `ego_app_dialog{action:'accept'}` 之后**立即恢复**。另测三条路径（点击不开选择框 / 选择框晚于超时打开 /
+  1 ms 超时）**都未复现**永久污染，所以没有引入 `page.close()` 之类的自毁式回收。
+  处理：超时时按回执分流给出指引（有 dialog → 叫你先应答；没有 → 重试/换页），
+  并额外发一次 `Page.setInterceptFileChooserDialog {enabled:false}` 作为兜底清理（实测不影响后续选择框）。
+- **R3**：`ego_app_pointer` 描述补上它其实会返回 `receipt`。
+- **R4**：`trigger` 参数描述写明"只有纯 CSS 会被预滚动；ref/loc= trigger 在长页面上可能打不开选择框"。
+- **R5**：`ego_app_download.saveAs` 改为 schema 级 `required: true`（`dsh-tools` 支持逐属性声明），
+  缺少参数时由宿主直接拒绝：`invalid arguments: missing required property "saveAs"`。
+- **测试**：
+  - `live-e2e` 新增 3 项（超时带回执 / 提示指向 ego_app_dialog / 应答后 chooser 恢复），共 **29 项**；
+    原"dialog 不是双层嵌套"断言改为诚实的 shape guard（该 fixture 不会触发上传对话框）。
+  - `test/pointer-selector.mjs` 在 ego lite 未运行时打印 SKIP 并退出 0，可安全放进 CI。
+  - `package.json` 新增 `npm run test:live`（live-e2e + pointer-selector），README 说明 `npm test` 与它各自覆盖什么。
+
 ## 0.1.4 — 2026-11-01
 
 修复 0.1.3 引入的 1 个高危缺陷 + 核验报告里的字段/描述/超时问题。
