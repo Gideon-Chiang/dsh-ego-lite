@@ -403,6 +403,19 @@ check(
 	{ ok: locatorClick.ok, error: String(locatorClick.error ?? "").slice(0, 160), before: clicksBefore, after: clicksAfter }
 );
 
+// 0.1.10: `>>` inside a quoted CSS value is literal CSS text, so mouse_click must
+// accept it and report the selector as missing — not refuse it as an ego locator.
+const quotedCssClick = await call("ego_app_pointer", {
+	action: "mouse_click", name: "e2e-进阶", selector: '[data-x="a>>b"]'
+});
+check(
+	"mouse_click treats a quoted >> as plain CSS (selector not found, not does-not-accept)",
+	quotedCssClick.ok === false &&
+		/selector not found/.test(String(quotedCssClick.error ?? "")) &&
+		!/does not accept/.test(String(quotedCssClick.error ?? "")),
+	{ ok: quotedCssClick.ok, error: String(quotedCssClick.error ?? "").slice(0, 180) }
+);
+
 // 0.1.9 S3: mouse_click pre-scrolls a plain CSS selector into view; it must put
 // the viewport back afterwards instead of leaving the page parked at the target.
 const scrollClicksBefore = Number(
@@ -425,6 +438,117 @@ check(
 		clicks: [scrollClicksBefore, scrollClicksAfter],
 		scrollY: Number(scrollAfterRestore),
 		error: String(scrollRestoreClick.error ?? "").slice(0, 160)
+	}
+);
+
+// ═══ 0.1.10: pageCreated / js mode / wait-function source / abort ═══
+// pageCreated makes a silent newPage() visible: reusing an existing label is
+// false, while asking for a label the space does not have creates a Page.
+const reuseNav = await call("ego_app_navigate", { name: "e2e-进阶", page: "p1", url: fixture });
+check(
+	"pageCreated is false when an existing Page label is reused",
+	reuseNav.ok === true && reuseNav.pageCreated === false,
+	{ ok: reuseNav.ok, pageCreated: reuseNav.pageCreated, page: reuseNav.page, error: String(reuseNav.error ?? "").slice(0, 140) }
+);
+const createdNav = await call("ego_app_navigate", { name: "e2e-进阶", page: "p9", url: fixture });
+check(
+	"pageCreated is true when a missing Page label has to be created",
+	createdNav.ok === true && createdNav.pageCreated === true && createdNav.page !== "p9",
+	{ ok: createdNav.ok, pageCreated: createdNav.pageCreated, page: createdNav.page, error: String(createdNav.error ?? "").slice(0, 140) }
+);
+
+// js mode replaces the punctuation heuristic when the caller knows what it has.
+const jsExpression = await call("ego_app_js", { name: "e2e-进阶", mode: "expression", expression: "21 * 2" });
+check("ego_app_js mode=expression evaluates a value", jsExpression.ok === true && jsExpression.value === 42, {
+	ok: jsExpression.ok,
+	value: jsExpression.value,
+	error: String(jsExpression.error ?? "").slice(0, 140)
+});
+const jsStatements = await call("ego_app_js", {
+	name: "e2e-进阶", mode: "statements", expression: "const base = 40; return base + 2;"
+});
+check("ego_app_js mode=statements runs a statement body", jsStatements.ok === true && jsStatements.value === 42, {
+	ok: jsStatements.ok,
+	value: jsStatements.value,
+	error: String(jsStatements.error ?? "").slice(0, 140)
+});
+const jsFunction = await call("ego_app_js", {
+	name: "e2e-进阶", mode: "function", expression: "(arg) => arg.n + 1", arg: { n: 41 }
+});
+check("ego_app_js mode=function evaluates a function source with arg", jsFunction.ok === true && jsFunction.value === 42, {
+	ok: jsFunction.ok,
+	value: jsFunction.value,
+	error: String(jsFunction.error ?? "").slice(0, 140)
+});
+const jsBogus = await call("ego_app_js", { name: "e2e-进阶", mode: "eval", expression: "1 + 1" });
+check(
+	"an unknown js mode is rejected readably instead of guessing",
+	jsBogus.ok === false && /unknown js mode "eval"/.test(String(jsBogus.error ?? "")),
+	{ ok: jsBogus.ok, error: String(jsBogus.error ?? "").slice(0, 160) }
+);
+
+// wait{for:'function'} must use a whole function source as the predicate itself.
+const waitExpression = await call("ego_app_wait", { name: "e2e-进阶", for: "function", expression: "1 === 1", timeoutMs: 8000 });
+check("wait{for:'function'} accepts a plain predicate expression", waitExpression.ok === true, {
+	ok: waitExpression.ok,
+	error: String(waitExpression.error ?? "").slice(0, 140)
+});
+const waitFunctionSource = await call("ego_app_wait", { name: "e2e-进阶", for: "function", expression: "() => true", timeoutMs: 8000 });
+check("wait{for:'function'} accepts a whole function source", waitFunctionSource.ok === true, {
+	ok: waitFunctionSource.ok,
+	error: String(waitFunctionSource.error ?? "").slice(0, 140)
+});
+// The regression probe: a false-returning function source must time out. Wrapping
+// it as `() => (() => false)` would make the wrapper return a truthy function and
+// pass instantly — exactly the bug 0.1.10 fixed.
+const waitFunctionFalse = await call("ego_app_wait", {
+	name: "e2e-进阶", for: "function", expression: "() => false", timeoutMs: 800
+});
+check(
+	"wait{for:'function'} uses a function source as the predicate (false times out)",
+	waitFunctionFalse.ok === false && /waitForFunction timed out/.test(String(waitFunctionFalse.error ?? "")),
+	{ ok: waitFunctionFalse.ok, error: String(waitFunctionFalse.error ?? "").slice(0, 160) }
+);
+
+// exec.signal must kill the child process, not wait out the call.
+const abortController = new AbortController();
+const abortStarted = Date.now();
+const abortPending = tools.get("ego_app_wait").execute(
+	{ name: "e2e-进阶", for: "timeout", timeoutMs: 30000 },
+	{ signal: abortController.signal }
+);
+setTimeout(() => abortController.abort(), 400);
+const abortedCall = await abortPending;
+const abortElapsed = Date.now() - abortStarted;
+check(
+	"aborting exec.signal kills the running call quickly",
+	abortedCall.ok === false && /aborted by the caller/.test(String(abortedCall.error ?? "")) && abortElapsed < 8000,
+	{ ok: abortedCall.ok, elapsedMs: abortElapsed, error: String(abortedCall.error ?? "").slice(0, 140) }
+);
+const preAborted = new AbortController();
+preAborted.abort();
+const preAbortStarted = Date.now();
+const preAbortedCall = await tools.get("ego_app_wait").execute(
+	{ name: "e2e-进阶", for: "timeout", timeoutMs: 30000 },
+	{ signal: preAborted.signal }
+);
+const preAbortElapsed = Date.now() - preAbortStarted;
+check(
+	"an already-aborted signal short-circuits before the CLI spawn",
+	preAbortedCall.ok === false && /aborted by the caller/.test(String(preAbortedCall.error ?? "")) && preAbortElapsed < 500,
+	{ ok: preAbortedCall.ok, elapsedMs: preAbortElapsed, error: String(preAbortedCall.error ?? "").slice(0, 140) }
+);
+
+// page reload/focus now pass their timeout through instead of dropping it.
+const reloadWithTimeout = await call("ego_app_page", { action: "reload", name: "e2e-进阶", timeoutMs: 8000 });
+const focusWithTimeout = await call("ego_app_page", { action: "focus", name: "e2e-进阶", selector: "#target", timeoutMs: 8000 });
+check(
+	"ego_app_page{reload,focus} accept and pass timeoutMs",
+	reloadWithTimeout.ok === true && focusWithTimeout.ok === true,
+	{
+		reloadOk: reloadWithTimeout.ok,
+		focusOk: focusWithTimeout.ok,
+		error: String(reloadWithTimeout.error ?? focusWithTimeout.error ?? "").slice(0, 160)
 	}
 );
 
@@ -809,6 +933,78 @@ check(
 		readable(blankNameClose.error) &&
 		guardListedAfterBlank,
 	{ ok: blankNameClose.ok, error: String(blankNameClose.error ?? "").slice(0, 180), hint: String(blankNameClose.hint ?? "").slice(0, 120), stillListed: guardListedAfterBlank }
+);
+// 0.1.10: timeoutMs is a duration, not a flag — 0/negative are rejected before
+// anything runs, and nothing may happen as a side effect.
+const timeoutDownloadPath = path.join(tmpdir(), "ego-live-010-timeout-download.txt").split("\\").join("/");
+try { fsHas.rmSync(timeoutDownloadPath, { force: true }); } catch {}
+const hygieneUrlBefore = (await call("ego_app_js", { name: guardName, expression: "location.href" })).value;
+const navZero = await call("ego_app_navigate", { name: guardName, url: "about:blank", timeoutMs: 0 });
+const navNegative = await call("ego_app_navigate", { name: guardName, url: fixture, timeoutMs: -5 });
+const hygieneUrlAfter = (await call("ego_app_js", { name: guardName, expression: "location.href" })).value;
+check(
+	"ego_app_navigate rejects timeoutMs 0/-5 without navigating",
+	navZero.ok === false &&
+		navNegative.ok === false &&
+		/timeoutMs must be a positive number of milliseconds/.test(String(navZero.error ?? "")) &&
+		/timeoutMs must be a positive number of milliseconds/.test(String(navNegative.error ?? "")) &&
+		hygieneUrlAfter === hygieneUrlBefore,
+	{
+		okZero: navZero.ok,
+		okNegative: navNegative.ok,
+		error: String(navZero.error ?? "").slice(0, 150),
+		navigated: hygieneUrlAfter !== hygieneUrlBefore
+	}
+);
+
+const waitZero = await call("ego_app_wait", { name: guardName, for: "timeout", timeoutMs: 0 });
+const waitNegative = await call("ego_app_wait", { name: guardName, for: "timeout", timeoutMs: -5 });
+check(
+	"ego_app_wait rejects timeoutMs 0/-5 instead of waiting",
+	waitZero.ok === false &&
+		waitNegative.ok === false &&
+		/timeoutMs must be a positive number of milliseconds/.test(String(waitZero.error ?? "")) &&
+		/timeoutMs must be a positive number of milliseconds/.test(String(waitNegative.error ?? "")),
+	{ okZero: waitZero.ok, okNegative: waitNegative.ok, error: String(waitZero.error ?? "").slice(0, 150) }
+);
+
+const downloadZero = await call("ego_app_download", { name: guardName, trigger: "#dl", saveAs: timeoutDownloadPath, timeoutMs: 0 });
+const downloadNegative = await call("ego_app_download", { name: guardName, trigger: "#dl", saveAs: timeoutDownloadPath, timeoutMs: -5 });
+check(
+	"ego_app_download rejects timeoutMs 0/-5 without triggering the download",
+	downloadZero.ok === false &&
+		downloadNegative.ok === false &&
+		/timeoutMs must be a positive number of milliseconds/.test(String(downloadZero.error ?? "")) &&
+		/timeoutMs must be a positive number of milliseconds/.test(String(downloadNegative.error ?? "")) &&
+		fsHas.existsSync(timeoutDownloadPath) === false,
+	{
+		okZero: downloadZero.ok,
+		okNegative: downloadNegative.ok,
+		savedFileExists: fsHas.existsSync(timeoutDownloadPath),
+		error: String(downloadZero.error ?? "").slice(0, 150)
+	}
+);
+
+const waitControlHygieneStart = Date.now();
+const waitControlZero = await call("ego_app_space", { action: "wait_control", name: guardName, timeoutMs: 0 });
+const waitControlNegative = await call("ego_app_space", { action: "wait_control", name: guardName, timeoutMs: -5 });
+const waitControlHygieneElapsed = Date.now() - waitControlHygieneStart;
+const guardAfterTimeoutHygiene = (await listSpaces()).spaces.find((space) => space.id === guardId);
+check(
+	"wait_control rejects timeoutMs 0/-5 without waiting and leaves control unchanged",
+	waitControlZero.ok === false &&
+		waitControlNegative.ok === false &&
+		/timeoutMs must be a positive number of milliseconds/.test(String(waitControlZero.error ?? "")) &&
+		/timeoutMs must be a positive number of milliseconds/.test(String(waitControlNegative.error ?? "")) &&
+		waitControlHygieneElapsed < 5000 &&
+		guardAfterTimeoutHygiene?.ownership === "agent",
+	{
+		okZero: waitControlZero.ok,
+		okNegative: waitControlNegative.ok,
+		elapsedMs: waitControlHygieneElapsed,
+		ownership: guardAfterTimeoutHygiene?.ownership,
+		error: String(waitControlZero.error ?? "").slice(0, 150)
+	}
 );
 await cleanupSpace(guardName, guardId);
 

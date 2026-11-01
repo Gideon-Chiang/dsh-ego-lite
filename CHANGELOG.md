@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.10 — 2026-11-01
+
+0.1.9 的收尾轮：修 0.1.9 验证/审计报告里的 **3 个 S2 残留**（读数失败被当成空间消失、任务结束兜底把已达成状态判失败、`keepPages` 未验证——最后一项已在上一轮补掉）、delta 审计的 **4 个 NEW 项**，以及 verifier §13.2 的 `list` fail-open 等问题。
+
+- **读数失败 = 失败（fail-closed）**：`ego_app_space{action:'list'}`、`ego_app_status`、`delete`、空间动作的前置解析、以及六个「轮询后回读」动作（`close`/`finish`/`complete`/`mark_error`/`handoff`/`wait_control`），在 `ego.listTaskSpaces()` 返回错误对象或缺 `taskSpaces` 数组时**一律报失败**（错误含 `unreadable`，hint 指向先 `list`/`ego_app_status` 再重试），不再把「读失败」当成「没有空间 / 删除成功 / 空列表」。`ego_app_status` 的 tabs 读失败降级为 `tabs: []` + `tabsError`，空间列表本身成功时整体仍 `ok:true`。**两类读失败刻意区分**：`create`/`use`/`claim` 动作后的列表刷新是 **best-effort**——读失败只给 `spacesError` 字段，仍返回 `ok:true`（动作本身的 `spaceId` 等证据已经拿到）；`list`/`ego_app_status`/`delete`/空间前置解析/六个回读则**必须** fail-closed，读不到就报错。
+- **`list` 不再 fail-open**（verifier §13.2）：旧实现读失败时返回 `{count:0, spaces:[]}`，所有「用 list 证明空间已消失」的验证都被静默放宽；现在直接失败并带可读原因。
+- **任务结束兜底的字段补齐**：兜底成功结果补齐正常路径会返回的字段——`takeover` 按 name 调用时带 `name`（按 id 调用拿不到就不补）、`wait_control` 带 `requestedTimeoutMs`/`timeoutMs`/`clamped`/`value`、`finish` 带 `keep`（宿主请求值）。`finish(keep:true)` 的兜底 note 明确「页面级保留无法用空间列表验证，需要 `keptManagedLabels` 请用正常路径回执」。
+- **`timeoutMs` 卫生**：显式 `<= 0` / 非有限值在副作用之前直接拒绝：`timeoutMs must be a positive number of milliseconds (it is a duration, not a flag).`；`ego_app_page{action:'reload'|'focus'}` 现在透传 `timeoutMs`（`close` 没有参数），第 16 条的「page 不透传」说法随之作废。
+- **locator 引号不误判**：`[data-x="a>>b"]`、`[title=":has-text("]` 这类**引号内**含 locator 标记的合法 CSS 不再被误判成 ego locator；引号外的 `>>`/`:has-text(` 仍按 locator 交给 ego 自己的解析器（`plainCssFrom` 增加引号剥离）。
+- **`ego_app_js` 新增 `mode`**：`auto`（默认，保留原标点启发式）/ `expression` / `statements` / `function`；`fn` 等价 `function`。`ego_app_wait{for:'function'}` 接受**完整函数源码**，不再被包成 `() => (...)` 导致等待恒真。
+- **`pageCreated` 可见**：**真正的 Page 工具**（`navigate`/`snapshot`/`screenshot`/`click`/`fill`/`key`/`pointer`/`select`/`wait`/`js`/`cdp`/`dialog`/`upload`/`download`/`page`）结果带 `pageCreated`，静默 `newPage()` 不再是隐形的；`ego_app_space{action:'open'}` 修回与 0.1.9 一致（**不返回** `pageCreated`，也不再自动建 Page——新空间 `pages` 可能为空，首次 Page 工具调用才 `newPage()`），`ego_app_gesture` 同样不返回。
+- **abort 真取消**：调用方取消（AbortSignal）会 kill 子进程并立即返回 `aborted by the caller`，不再等到插件级 180 s 上限。
+- **哨兵 nonce**：插件生成的脚本把结构化结果哨兵换成 per-run 随机后缀（`@@DSH_RESULT@@<nonce>`），页面文本伪造整行哨兵不再能顶替结构化结果。nonce 只替换插件自己生成的那一行打印表达式，**用户脚本里出现同名字面量（含 `@@DSH_NONCE_SLOT@@`）不会被改写**；`ego_app_run` 保持 plain `@@DSH_RESULT@@` 契约。带 token 的结构化调用若拿不到本 run 的哨兵行，会报专门的「没有携带本次运行 token 的结果行」，不再误称「脚本没跑」。
+- **render 截断有标记**：结果超过 20000 字符时追加 `…[renderedTruncated omittedChars=N limitChars=20000]`，不再静默截断。
+- **新 hint**：`no space with id`、`only removes user-owned`、`matches N spaces`、`could not be read|could not be verified` 等失败现在都带下一步建议；hint 仍优先给具体观测（具体状态覆盖泛化的安装/onboarding 提示）。
+- **其它**：`lossless()` 改为递归过滤（嵌套对象/数组里的 `undefined` 不再漏给宿主）；Page 工具的结果统一过 `lossless`。
+- **文档/测试**：README 中英新增 0.1.10 行为变化节并更新第 16 条；新增 `docs/TEST-RUN-2026-11-01-0.1.10.md`。测试：`npm test` **48/48**（`cli-outcome` 21、`output-collector` 6、`locator-detect` 5、`ended-task-outcome` 16）；`live-e2e` **89/89**、`pointer-selector` **11/11**（`EGO_E2E_REQUIRE=1`，2026-11-01 实跑；0.1.9 为 43/72/11）。
+
 ## 0.1.9 — 2026-11-01
 
 按 0.1.8 验证报告修「`ok:true` 已经可信、`ok:false` 还不可信」的一批问题：本轮重点是让**失败结论也有实测依据**，并收掉 0.1.8 修复自身引入的回归。

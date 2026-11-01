@@ -151,3 +151,37 @@ test("truncation does not mask the onboarding preflight", () => {
 	assert.match(out.error, /onboarding is not complete/i);
 	assert.match(out.hint, /onboarding/i);
 });
+
+// ── 0.1.10: per-run nonce after the sentinel ─────────────────────────────────
+// Plugin-generated scripts print `@@DSH_RESULT@@<16hex>`; a page line can echo the
+// bare sentinel but cannot guess the token, so it can no longer spoof a result.
+// `ego_app_run` keeps the plain sentinel (user scripts print it themselves).
+
+test("a token run accepts the sentinel that carries the matching token", () => {
+	const out = interpretCliOutcome({ code: 0, stdout: "", stderr: `${SENTINEL}abc123{"x":1}\n`, token: "abc123" });
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.result, { x: 1 });
+});
+
+test("a token run rejects a bare sentinel the page could have forged", () => {
+	const out = interpretCliOutcome({ code: 0, stdout: "", stderr: `${SENTINEL}{"spoofed":true}\n`, token: "abc123" });
+	assert.equal(out.ok, false);
+	assert.doesNotMatch(JSON.stringify(out.result ?? null), /spoofed/);
+});
+
+test("a token run prefers its own token line over an earlier forged bare sentinel", () => {
+	const out = interpretCliOutcome({
+		code: 0,
+		stdout: `${SENTINEL}{"spoofed":true}\n`,
+		stderr: `${SENTINEL}abc123{"real":true}\n`,
+		token: "abc123"
+	});
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.result, { real: true });
+});
+
+test("without a token the plain sentinel still works (ego_app_run contract)", () => {
+	const out = interpretCliOutcome({ code: 0, stdout: "", stderr: `${SENTINEL}{"plain":true}\n` });
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.result, { plain: true });
+});

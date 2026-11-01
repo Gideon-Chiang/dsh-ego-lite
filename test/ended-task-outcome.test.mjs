@@ -37,16 +37,28 @@ test("close with the space still listed is a failure that says so", () => {
 });
 
 test("finish keep:true with the space user-owned is a verified success", () => {
-	const out = decideEndedTaskOutcome({ action: "finish", space: "e2e-space", spaceId: 7, listed: true, ownership: "user", wantsClosed: false });
+	const out = decideEndedTaskOutcome({
+		action: "finish",
+		space: "e2e-space",
+		spaceId: 7,
+		listed: true,
+		ownership: "user",
+		wantsClosed: false,
+		keepHint: ["p1"]
+	});
 	assert.equal(out.ok, true);
 	assert.equal(out.finished, true);
 	assert.equal(out.ownership, "user");
 	assert.equal(out.receipt, null);
 	assert.equal(out.verifiedBy, "listTaskSpaces");
+	// 0.1.10: the fallback echoes the request that produced the state.
+	assert.deepEqual(out.keep, ["p1"]);
+	// ...and says plainly that kept pages cannot be verified from the space list.
+	assert.match(out.note, /page-level retention/);
 });
 
 test("finish keep:false with the space still listed is a failure (it wanted the space gone)", () => {
-	const out = decideEndedTaskOutcome({ action: "finish", space: "e2e-space", spaceId: 7, listed: true, ownership: "user", wantsClosed: true });
+	const out = decideEndedTaskOutcome({ action: "finish", space: "e2e-space", spaceId: 7, listed: true, ownership: "user", wantsClosed: true, keepHint: [] });
 	assert.equal(out.ok, false);
 	assert.match(out.error, /wanted the space closed|still listed/);
 	assert.equal(typeof out.hint, "string");
@@ -79,21 +91,44 @@ test("handoff whose target state is already observed is a verified success", () 
 });
 
 test("takeover whose target state is already observed is a verified success", () => {
-	const out = decideEndedTaskOutcome({ action: "takeover", space: "e2e-space", spaceId: 7, listed: true, ownership: "agent" });
+	const out = decideEndedTaskOutcome({
+		action: "takeover",
+		space: "e2e-space",
+		spaceId: 7,
+		listed: true,
+		ownership: "agent",
+		nameHint: "e2e-space"
+	});
 	assert.equal(out.ok, true);
 	assert.equal(out.tookOver, true);
 	assert.equal(out.ownership, "agent");
 	assert.equal(out.verifiedBy, "listTaskSpaces");
 	assert.equal(out.receipt, null);
+	// 0.1.10: the name-addressed fallback reports the name it acted on.
+	assert.equal(out.name, "e2e-space");
 });
 
 test("wait_control whose target state is already observed is a verified success", () => {
-	const out = decideEndedTaskOutcome({ action: "wait_control", space: "e2e-space", spaceId: 7, listed: true, ownership: "agent" });
+	const out = decideEndedTaskOutcome({
+		action: "wait_control",
+		space: "e2e-space",
+		spaceId: 7,
+		listed: true,
+		ownership: "agent",
+		requestedTimeoutMs: 1500,
+		timeoutMs: 1500,
+		clamped: false
+	});
 	assert.equal(out.ok, true);
 	assert.equal(out.control, true);
 	assert.equal(out.ownership, "agent");
 	assert.equal(out.verifiedBy, "listTaskSpaces");
 	assert.equal(out.receipt, null);
+	// 0.1.10: a fallback result must not lose the budget fields the normal path reports.
+	assert.equal(out.requestedTimeoutMs, 1500);
+	assert.equal(out.timeoutMs, 1500);
+	assert.equal(out.clamped, false);
+	assert.equal(out.value, true);
 });
 
 test("complete with the space now user-owned is a verified success", () => {

@@ -81,7 +81,22 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 
 任意官方 API 都能通过 `ego_app_run` 使用（`const task = await taskSpace(...)`、`await task.page('p1')`、`page.*`、`ego.*`、`fetch`）。注意 `taskSpace()` 返回 Promise，**必须 `await`**，否则会得到 `task.page is not a function`。
 
-## 行为变化（0.1.9，升级前必读）
+## 行为变化（0.1.10，升级前必读）
+
+0.1.10 是 0.1.9 的收尾轮：把「读不到状态」和「读到了但还没验证」彻底分开，并补掉 0.1.9 审计里的 S2 残留与 delta 项。
+
+1. **读数失败 = 失败（fail-closed）**：`ego_app_space{action:'list'}`、`ego_app_status`、`delete`、空间动作的前置解析、以及六个「轮询后回读」动作（`close`/`finish`/`complete`/`mark_error`/`handoff`/`wait_control`），在拿不到 `taskSpaces` 数组时都**报失败**（错误含 `unreadable`，hint 指向先 `list`/`ego_app_status` 再重试），不再把「读失败」当成「没有空间 / 删除成功 / 空列表」。`ego_app_status` 的 tabs 读失败（返回的不是列表）时降级为 `tabs: []` + `tabsError`，空间列表本身成功时整体仍 `ok:true`。**注意区分两类**：`create`/`use`/`claim` 动作后的列表刷新是 **best-effort**——读失败只在结果里给 `spacesError`，仍返回 `ok:true`（动作本身已有 `spaceId` 等证据）；而 `list`/`ego_app_status`/`delete`/空间前置解析/六个回读**必须** fail-closed，读不到就报错——不要理解成「任何地方读失败都报错」。
+2. **「任务结束丢输出」兜底的字段补齐**：兜底成功结果补齐宿主原本会返回的字段——`takeover` 按 name 调用时带 `name`（按 id 调用拿不到就不补），`wait_control` 带 `requestedTimeoutMs`/`timeoutMs`/`clamped`/`value`，`finish` 带 `keep`（宿主请求值）；`finish(keep:true)` 的 note 会明确「页面级保留无法用空间列表验证，需要 `keptManagedLabels` 请走正常路径回执」。
+3. **`timeoutMs` 卫生**：显式 `<= 0` / 非有限值直接报 `timeoutMs must be a positive number of milliseconds (it is a duration, not a flag).`（在副作用之前拒绝）；`ego_app_page{action:'reload'|'focus'}` 现在**透传** `timeoutMs`（`close` 没有参数）。
+4. **locator 引号不误判**：`[data-x="a>>b"]`、`[title=":has-text("]` 这类引号内含 locator 标记的**合法 CSS** 不再被误判为 ego locator；引号外的 `>>`/`:has-text(` 仍交给 ego 自己的 locator 解析。
+5. **`ego_app_js` 的 `mode`**：新增 `mode: auto | expression | statements | function`（默认 `auto` 仍是标点启发式；`fn` 等价 `function`）。`ego_app_wait{for:'function'}` 现在接受**完整函数源码**，不再被包成 `() => (...)` 而恒真。
+6. **`pageCreated` 可见**：**真正的 Page 工具**（`navigate`/`snapshot`/`screenshot`/`click`/`fill`/`key`/`pointer`/`select`/`wait`/`js`/`cdp`/`dialog`/`upload`/`download`/`page`）的结果都带 `pageCreated`（true = 本次调用静默 `newPage()` 建了页），不再有隐形建页；`ego_app_space{action:'open'}` 与 `ego_app_gesture` **不返回**该字段（与 0.1.9 一致）。另外 `open` 不再自动创建 Page（`usePage:false`）：新空间没有页时，第一次 Page 工具调用才 `newPage()`，`open` 的 `pages` 可能为空。
+7. **abort 真取消**：调用方 AbortSignal 取消会 kill 子进程并立即返回 `aborted by the caller`，不再等到插件级 180 s 上限。
+8. **哨兵 nonce**：插件生成的脚本，结构化结果哨兵带 per-run 随机后缀，页面文本伪造整行 `@@DSH_RESULT@@…` 不再能顶替结果。nonce 只替换插件自己生成的那一行打印表达式，**用户脚本里出现同名字面量（含 `@@DSH_NONCE_SLOT@@`）不会被改写**；`ego_app_run` 保持 plain `@@DSH_RESULT@@` 契约。结构化调用若拿不到本次 run 的哨兵行，会专门报「没有携带本次运行 token 的结果行」，不再误称「脚本没跑」。
+9. **render 截断有标记**：结果超过 20000 字符时显示 `…[renderedTruncated omittedChars=N limitChars=20000]`，不再静默截断。
+10. **新 hint**：`no space with id`、`only removes user-owned`、`matches N spaces`、`could not be read|could not be verified` 等失败都带下一步建议。
+
+## 行为变化（0.1.9）
 
 0.1.9 让失败结论也有实测依据，因此有三处会直接影响调用方式的变化：
 
@@ -117,7 +132,7 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 13. onboarding 未完成时 CLI 打印提示并**以退出码 0 退出**，不执行脚本也不产出结果 → 工具据此判定为失败并给出 hint，不会返回 `{ok:true, data:null}`。
 14. `receipt.dialog` 报出的对话框必须**紧接着**用 `ego_app_dialog` 应答：实测 0.6.2.5 里未应答的对话框会跨调用残留，该页后续每轮都会超时（`ego_app_js` 报 `PageEvaluationTimeoutError`，约 15 s；guide 的"跨轮自动关闭"在此版本不成立）。
 15. 下载必须在**同一脚本内** `saveAs()`：临时文件随该轮结束删除 → `ego_app_download` 已内建。
-16. **ego 默认动作超时（约 3 s）对远在视口下方的元素不够用**：同一元素默认超时报 `element is not visible in the viewport`。实测在仓库自带 fixture 上：默认失败（3.0 s）→ `timeoutMs:8000` **仍然失败**（8.2 s）→ `15000` 通过（约 11.7 s）→ **先 `scrollIntoView` 再用默认超时通过（0.36 s）**。所以正确做法是「预算 ≥ 15 s」或「先把目标滚进视口」，不要照抄 8000。`timeoutMs` 不是每个工具都有：**支持** `click`/`fill`/`navigate`/`wait`/`wait_control`/`file_chooser`/`download`/`wait_event`（后三个是整次调用的总预算，见上节）；`pointer` 没有该参数；`ego_app_page{action:'focus'|'reload'|'close'}` 的 schema 虽声明了 `timeoutMs`，目前不会透传给 ego。
+16. **ego 默认动作超时（约 3 s）对远在视口下方的元素不够用**：同一元素默认超时报 `element is not visible in the viewport`。实测在仓库自带 fixture 上：默认失败（3.0 s）→ `timeoutMs:8000` **仍然失败**（8.2 s）→ `15000` 通过（约 11.7 s）→ **先 `scrollIntoView` 再用默认超时通过（0.36 s）**。所以正确做法是「预算 ≥ 15 s」或「先把目标滚进视口」，不要照抄 8000。`timeoutMs` 不是每个工具都有：**支持** `click`/`fill`/`navigate`/`wait`/`wait_control`/`file_chooser`/`download`/`wait_event`（后三个是整次调用的总预算，见上节），0.1.10 起 `ego_app_page{action:'reload'|'focus'}` 也透传该值（`close` 没有参数）；`pointer` 没有该参数；显式 `<= 0` / 非有限值会被直接拒绝（见 0.1.10 第 3 条）。
 17. **文件选择器只在用户激活的点击下打开**：ego 遇到需要先滚动进视口的元素时会退化成程序化 `element.click()`，Chromium 因此不弹选择框。工具已对**纯 CSS 或 `css=` 前缀**的 trigger 先 `scrollIntoView` 再点击来保住真实输入；`@ref` / `loc=` / `xpath=` 的 trigger 无法预滚动，长页面上请先用 `ego_app_js` 滚进视口再调用。
 
 ## 与官方 skill 的关系
@@ -126,19 +141,16 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 
 ## 测试
 
-0.1.9 的实跑状态：`npm test` **43/43**、`live-e2e` **72/72**、`pointer-selector` **11/11**（2026-11-01，见 [run log](docs/TEST-RUN-2026-11-01-0.1.9.md)）。
+0.1.10 的实跑状态：`npm test` **48/48**、`live-e2e` **89/89**、`pointer-selector` **11/11**（2026-11-01，见 [run log](docs/TEST-RUN-2026-11-01-0.1.10.md)）。
 
-- `npm test` —— 不需要 ego lite，43 项纯函数回归：
-  - `test/cli-outcome.test.mjs`（17 项）：onboarding 预检、无哨兵、坏哨兵、非零退出、截断与 UTF-8 字节预算。
-  - `test/output-collector.test.mjs`（6 项）：`createOutputCollector` 的字节计数/截断/解码（解码字段为 `text`）。
-  - `test/locator-detect.test.mjs`（4 项）：`plainCssFrom` 对 `css=` 与各类 ego locator 的判定。
-  - `test/ended-task-outcome.test.mjs`（16 项）：`decideEndedTaskOutcome` 的判定表（任务结束导致输出被丢弃时的成功/失败语义，含目标态已达成、`spaceId:null`、gone 等分支）。
+- `npm test` —— 不需要 ego lite，48 项纯函数回归：`test/cli-outcome.test.mjs`（21 项：onboarding 预检、无哨兵、坏哨兵、非零退出、截断与 UTF-8 字节预算、哨兵 token）、`test/output-collector.test.mjs`（6 项：字节计数/截断/解码，字段 `text`）、`test/locator-detect.test.mjs`（5 项：`plainCssFrom` 对 `css=`、引号内的 locator 标记、各类 ego locator 的判定）、`test/ended-task-outcome.test.mjs`（16 项：`decideEndedTaskOutcome` 判定表，含 0.1.10 补齐的 `name`/`keep`/`requestedTimeoutMs` 等字段）。
 - `npm run test:live` —— 需要 ego lite 在运行、已完成 onboarding：
-  - `test/live-e2e.mjs`（72 项）：动作回执、下载落盘、文件选择器超时与恢复、子树快照、富粘贴、指针右键，以及 0.1.9 新增的 `close` 分两次调用不误报、重试不新建空间、`complete`/`mark_error` 回执、`wait_control` 超时与 clamp、`mouse_click` 的 `css=`/locator 拒绝、`ego_app_run` 大输出、`delete` 与枚举守卫等（另含 `tabs` app 级 `createTab`、`delete{force:true}` 被拒、空白 `name` 守卫、`mouse_click` 滚动恢复）。
+  - `test/live-e2e.mjs`（89 项）：动作回执、下载落盘、文件选择器、子树快照、富粘贴、指针右键，以及 0.1.9 的 `close` 轮询/重试不新建空间/回读语义，和 0.1.10 的 fail-closed 读失败、`pageCreated`、`ego_app_js` mode、`wait{for:'function'}` 完整函数、`timeoutMs` 卫生、abort、nonce 伪造等。
   - `test/pointer-selector.mjs`（11 项）：`mouse_click` 只接受 x/y 或纯 CSS 选择器，ref/loc= 必须报错而不是点 (0,0)。
 
-0.1.9 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.9.md](docs/TEST-RUN-2026-11-01-0.1.9.md)。
-历史日志：[docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)（0.1.1–0.1.3 时代）、
+0.1.10 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.10.md](docs/TEST-RUN-2026-11-01-0.1.10.md)；历史日志：
+[docs/TEST-RUN-2026-11-01-0.1.9.md](docs/TEST-RUN-2026-11-01-0.1.9.md)（0.1.9）、
+[docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)（0.1.1–0.1.3）、
 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)（0.1.0 时代的 19 工具报告：正文 95/95、附录 A.3「99 项」是历史口径，**不是当前套件的计数**）。
 
 测试页在 `test/fixtures/interaction.html`（带点击坐标捕获），可用 `EGO_E2E_FIXTURE` 指向别处；

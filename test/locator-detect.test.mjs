@@ -56,3 +56,19 @@ test("a css= prefix does not whitelist a locator", () => {
 	assert.equal(plainCssFrom('css=button:has-text("Save")'), null);
 	assert.equal(plainCssFrom("css=text=hello"), null);
 });
+
+test("quoted literals are CSS text, not ego locator syntax", () => {
+	// 0.1.10: markers inside quotes must not cause a false "not plain CSS".
+	const cases = [
+		'[data-x="a>>b"]',
+		'[title=":has-text("]',
+		"a[href='x?ref=y']",
+		'input[placeholder="text="]'
+	];
+	for (const selector of cases) assert.equal(plainCssFrom(selector), selector, selector);
+	// css= is stripped first, then the quoted body is still just CSS text.
+	assert.equal(plainCssFrom('css=[data-x="a>>b"]'), '[data-x="a>>b"]');
+	// A marker outside the quotes is still a locator.
+	assert.equal(plainCssFrom('div[data-x="a>>b"] >> nth=0'), null);
+	assert.equal(plainCssFrom('button:has-text("a>>b")'), null);
+});
