@@ -28,6 +28,7 @@ const check = (label, ok, detail) => {
 const status = await call("ego_app_status");
 if (!status.ok || !status.data) {
 	console.log("SKIP  ego lite is not running (or has not finished onboarding); start it and rerun: node test/pointer-selector.mjs");
+	if (process.env.EGO_E2E_REQUIRE) { console.error("FAIL  EGO_E2E_REQUIRE is set but ego lite is not running"); process.exit(1); }
 	process.exit(0);
 }
 

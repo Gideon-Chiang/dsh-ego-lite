@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.7 — 2026-11-01
+
+收掉第四轮审查提出的四处残留（均不影响主流程）。
+
+- **R-a**：`saveAs` 传空串/空白字符时，schema 的 `required` 只查存在性，会一路走到 ego 抛裸
+  `TypeError: download.saveAs requires an absolute file path`。现在 `execute` 先 `trim()` 校验，
+  返回人话：`saveAs must be a non-empty absolute path, for example C:/Users/me/Downloads/report.pdf`。
+- **R-b**：滚动恢复原来只记 `window.scrollY`，覆盖不到 `scrollIntoView` 连带滚动过的
+  `overflow:auto` 祖先。现在记录**所有可滚动祖先**的 `scrollTop/scrollLeft`（连同文档滚动位置）再逐个恢复，
+  实测嵌套面板 `scrollTop` 212.8 → 0。
+- **R-c**：恢复动作不再夹在"点击失败"与"抛错"之间——`__clickError` 存在时跳过恢复，
+  避免点击弹出阻塞对话框时先吃 15 s evaluate 超时、把回执延后约 18 秒。
+- **R-e**：live 用例修正——"等待器提前过期"改为用**不开选择框**的 trigger（`#target`），
+  这样走的是 arm-time `.catch` 路径而不是"click 取消 chooser"路径；回执形状检查改用可见元素的 click
+  （原用例填视口外的 `#editable`，ego 的 fill 滚不到，属于用例自身的脆弱）。
+  两个 live 套件新增 `EGO_E2E_REQUIRE=1`：应用没跑时不再静默 SKIP，而是 **exit 1**，CI 里能变红。
+- **R-d 行为变化记录**（非本轮引入，补文档）：
+  - `ego_app_page{action:'wait_event', event:'popup'}` 超时由"返回 `popup:null`"改为**报错**（0.1.3 起）。
+  - `ego_app_download` 缺 `saveAs` 由宿主抛 `ToolArgsError`（0.1.5 起，schema 必填），其余 19 个工具仍是 `{ok:false,error}`。
+- 测试：`live-e2e` **34 项**（+2：嵌套滚动容器恢复、空 `saveAs` 可读报错）。
+
 ## 0.1.6 — 2026-11-01
 
 修复 0.1.5 核验报告里的 3 个问题。

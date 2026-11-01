@@ -54,6 +54,16 @@
 </section>
 
 <section>
+  <h2>nested scroll container</h2>
+  <div id="panel" style="height:120px;overflow:auto;border:1px solid #ccc">
+    <div style="height:260px">above the picker</div>
+    <button id="panelPick">panel pick</button>
+    <div style="height:260px">below the picker</div>
+  </div>
+  <div>panel scrollTop <code id="panelScroll">0</code></div>
+</section>
+
+<section>
   <h2>rich paste</h2>
   <div id="editable" contenteditable="true">paste here:</div>
 </section>
@@ -94,6 +104,8 @@
   });
 
   $("pick").addEventListener("click", () => $("hiddenFile").click());
+  $("panelPick").addEventListener("click", () => $("hiddenFile").click());
+  $("panel").addEventListener("scroll", () => { $("panelScroll").textContent = String(Math.round($("panel").scrollTop)); });
   $("hiddenFile").addEventListener("change", () => {
     $("fileOut").textContent = Array.from($("hiddenFile").files).map((f) => f.name).join(",") || "(none)";
   });

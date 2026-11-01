@@ -29,6 +29,7 @@ const check = (label, ok, detail) => {
 const status = await call("ego_app_status");
 if (!status.ok || !status.data) {
 	console.log("SKIP  ego lite is not running (or has not finished onboarding); start it and rerun: npm run test:live");
+	if (process.env.EGO_E2E_REQUIRE) { console.error("FAIL  EGO_E2E_REQUIRE is set but ego lite is not running"); process.exit(1); }
 	process.exit(0);
 }
 check("status returns data (no silent null)", status.ok === true && status.data !== null, { ok: status.ok, spaces: status.data?.spaces?.length });
@@ -183,11 +184,11 @@ check(
 );
 
 // receipt must be absent (API returned nothing) or an object, never null
-const filled = await call("ego_app_fill", { name: "e2e-进阶", selector: "#editable", value: "x", timeoutMs: 8000 });
+const receipted = await call("ego_app_click", { name: "e2e-进阶", selector: "#target" });
 check(
 	"an action receipt is an object when present, never null",
-	filled.ok === true && (filled.receipt === undefined || (typeof filled.receipt === "object" && filled.receipt !== null)),
-	{ ok: filled.ok, receipt: filled.receipt }
+	receipted.ok === true && (receipted.receipt === undefined || (typeof receipted.receipt === "object" && receipted.receipt !== null)),
+	{ ok: receipted.ok, receipt: receipted.receipt }
 );
 
 await call("ego_app_page", { action: "focus", name: "e2e-进阶", selector: "#editable", timeoutMs: 8000 });
@@ -217,11 +218,13 @@ check(
 
 // A waiter that expires before the click resolves must still explain itself.
 const expiring = await call("ego_app_page", {
-	action: "file_chooser", name: "e2e-进阶", trigger: "#pick", timeoutMs: 1, files: [uploadFixture]
+	action: "file_chooser", name: "e2e-进阶", trigger: "#target", timeoutMs: 1, files: [uploadFixture]
 });
+// trigger opens no chooser on purpose: this exercises the arm-time .catch path,
+// not the "click cancelled the chooser" path.
 check(
-	"an expired waiter still carries the click receipt",
-	expiring.ok === false && /click receipt/.test(String(expiring.error ?? "")),
+	"an expired waiter still reports the timeout with a click receipt",
+	expiring.ok === false && /waitForFileChooser timed out/.test(String(expiring.error ?? "")) && /click receipt/.test(String(expiring.error ?? "")),
 	{ ok: expiring.ok, error: String(expiring.error ?? "").slice(0, 150) }
 );
 await call("ego_app_dialog", { action: "accept", name: "e2e-进阶" }).catch(() => {});
@@ -247,6 +250,32 @@ check(
 	{ ok: topAfterScroll.ok, error: String(topAfterScroll.error ?? "").slice(0, 120) }
 );
 await call("ego_app_dialog", { action: "accept", name: "e2e-进阶" }).catch(() => {});
+
+// A scrollIntoView inside an overflow:auto panel must be restored too.
+await call("ego_app_navigate", { name: "e2e-进阶", url: fixture });
+await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('panel').scrollTop = 0; 'reset'" });
+const panelChooser = await call("ego_app_page", {
+	action: "file_chooser", name: "e2e-进阶", trigger: "#panelPick", timeoutMs: 8000, files: [uploadFixture]
+});
+const panelScroll = Number((await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('panel').scrollTop" })).value);
+check(
+	"a nested scroll container is restored after the trigger click",
+	panelChooser.ok === true && Math.abs(panelScroll) < 5,
+	{ ok: panelChooser.ok, panelScroll }
+);
+
+// Empty saveAs must not fall through to a bare ego TypeError.
+let emptySave = null;
+try {
+	emptySave = await call("ego_app_download", { name: "e2e-进阶", trigger: "#dl", saveAs: "   " });
+} catch (error) {
+	emptySave = { thrown: String(error && error.message).slice(0, 120) };
+}
+check(
+	"an empty saveAs is rejected with a readable message",
+	emptySave && emptySave.ok === false && /non-empty absolute path/.test(String(emptySave.error ?? "")),
+	{ result: emptySave }
+);
 
 const advFinish = await call("ego_app_space", { action: "finish", name: "e2e-进阶", keep: false });
 check("advanced space finishes cleanly", advFinish.ok === true, advFinish);
