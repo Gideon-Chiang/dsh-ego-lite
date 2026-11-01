@@ -81,6 +81,15 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 
 任意官方 API 都能通过 `ego_app_run` 使用（`const task = await taskSpace(...)`、`await task.page('p1')`、`page.*`、`ego.*`、`fetch`）。注意 `taskSpace()` 返回 Promise，**必须 `await`**，否则会得到 `task.page is not a function`。
 
+## 行为变化（0.1.14，升级前必读）
+
+0.1.14 收掉 0.1.13 残留的最后两条 N4 词法边缘（N4-a/N4-b），其余行为不变。
+
+1. **N4-a 跳过注释**：`isBareFunctionSource` 的扫描器现在会跳过 `//` 行注释与 `/* … */` 块注释——注释里的 `}`/`)`/引号不再打断函数源码识别。`(x) => { // note
+ return x; }`、`(x) => { /* } */ return x; }`、`(x) => x /* ) */ > 0` 现在都判为函数源码；以前它们会被归成 expression、被包成 truthy 箭头，导致 `wait{for:'function'}` **首轮假通过**。**注释在扫描器里等同空白**：跳过 `//` 与 `/* */` 但不改变词法状态，所以 `return /*c*/ /}/.test(x)`、`(a = /*c*/ /[)]/…) => a`、`(a) => a + /*c*/ /[)]/` 也都是函数源码；**头部注释**（`function /*c*/ f(){}`、`async /*c*/ () => 1`、`function* /*c*/ g(){}`）同样支持；**`function` 与生成器的 `*` 之间也允许注释**（`function /*c*/ * g() {}`、`async /*c*/ function /*c*/ * g() {}` 都判为函数源码）。**注意生成器语义**：`function*` 被正确识别为函数源码，但把它用作 `wait{for:'function'}` 谓词时，调用返回的是 truthy 的迭代器对象 → 会立即通过；这是 JS 语义而不是分类假通过，需要布尔谓词请用非生成器函数（如 `function /*c*/ () { return false; }`）。
+2. **N4-b 关键字后的 regex**：`return`/`typeof`/`instanceof`/`case`/`yield`/`await`/`delete`/`void`/`in`/`of`/`new`/`do`/`else`/`throw` 之后出现的 `/…/` 会被当作 regex 跳过（`(x) => { return /}/.test(x); }`、`(x) => typeof /}/.test(x)` 现在判为函数源码）。
+3. **不变的部分**：调用表达式 `(async()=>1)()`、`(0,()=>7)()`、`function(){}()`、`((a)=>a)` 仍按 expression；字符串/模板里的 `//` 与括号不受影响（先 `skipQuoted`）；除法 `a / 2`、`a++ / 2`、`a && /x/.test(a)` 仍正确；解析层 `new Function("return (src);")` 仍是最终门槛。 仍保留的极窄边界（不影响本轮目标）：语句位 `)`/`}` 之后的 regex（`if (x) /}/…`）、文件尾 `//` 无换行（js 路径给可读错误）、`async => 1`。注：`(a /* ) */) => a` 现在为 **true**（注释等同空白），不属于残余。
+
 ## 行为变化（0.1.13，升级前必读）
 
 0.1.13 收掉 0.1.12 审计记的 5 条 S3 follow-up（N4/N6/N7/N9/N2①）。
@@ -188,14 +197,15 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 
 ## 测试
 
-0.1.13 的实跑状态：`npm test` **112/112**、`live-e2e` **89/89**、`pointer-selector` **11/11**（见 [run log](docs/TEST-RUN-2026-11-01-0.1.13.md)）。
+0.1.14 的实跑状态：`npm test` **126/126**、`live-e2e` **89/89**、`pointer-selector` **11/11**（见 [run log](docs/TEST-RUN-2026-11-01-0.1.14.md)）。
 
-- `npm test` —— 不需要 ego lite，112 项纯函数回归：`cli-outcome`、`output-collector`、`locator-detect`、`ended-task-outcome`、`function-source`（含 N4 括号匹配分类表）、`generated-scripts` + `test/fake-cli/nodejs`（假 ego CLI 断言生成脚本：R1–R11、N1/N2/N5、N4/N6/N7/N9/N2① 回归）。
+- `npm test` —— 不需要 ego lite，126 项纯函数回归：`cli-outcome`、`output-collector`、`locator-detect`、`ended-task-outcome`、`function-source`（含 N4 分类表与 **N4-a 注释 / N4-b 关键字 regex** 用例）、`generated-scripts` + `test/fake-cli/nodejs`（假 ego CLI 断言生成脚本：R1–R11、N1/N2/N5、N4/N6/N7/N9/N2①、N4-a/N4-b 回归）。
 - `npm run test:live` —— 需要 ego lite 在运行、已完成 onboarding；**真浏览器套件必须串行跑**（ego 的「当前选中 space/page」是应用级全局状态，并发会串页）。
-  - `test/live-e2e.mjs`（89 项）：动作回执、下载、文件选择器、快照、粘贴、指针，以及 0.1.9–0.1.12 的回读/fail-closed/`pageCreated`/abort/nonce/函数源码等；0.1.13 增补 N4 假通过消失（`wait{for:'function',expression:"(x = 1) => x > 5"}` 必须超时失败）、N2① name+id 时 id 胜、N9 log 上限、N7 非字符串 label。
+  - `test/live-e2e.mjs`（89 项）：动作回执、下载、文件选择器、快照、粘贴、指针，以及 0.1.9–0.1.13 的回读/fail-closed/`pageCreated`/abort/nonce/函数源码等；0.1.14 增补带注释/关键字 regex 的谓词被判为裸函数源码、带注释的 false 谓词在 600 ms 下必须超时失败。
   - `test/pointer-selector.mjs`（11 项）：`mouse_click` 只接受 x/y 或纯 CSS 选择器，ref/loc= 必须报错而不是点 (0,0)。
 
-0.1.13 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.13.md](docs/TEST-RUN-2026-11-01-0.1.13.md)；历史日志：
+0.1.14 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.14.md](docs/TEST-RUN-2026-11-01-0.1.14.md)；历史日志：
+[docs/TEST-RUN-2026-11-01-0.1.13.md](docs/TEST-RUN-2026-11-01-0.1.13.md)（0.1.13）、
 [docs/TEST-RUN-2026-11-01-0.1.12.md](docs/TEST-RUN-2026-11-01-0.1.12.md)（0.1.12）、
 [docs/TEST-RUN-2026-11-01-0.1.11.md](docs/TEST-RUN-2026-11-01-0.1.11.md)（0.1.11）、
 [docs/TEST-RUN-2026-11-01-0.1.10.md](docs/TEST-RUN-2026-11-01-0.1.10.md)（0.1.10）、

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.14 — 2026-11-01
+
+收掉 0.1.13 残留的最后两条 N4 词法边缘（N4-a/N4-b），其余行为不变。
+
+- **N4-a 跳过注释**：`isBareFunctionSource` 的扫描器新增 `skipComment()`——`//` 跳到行尾、`/* … */` 跳到闭合；注释里的 `}`/`)`/引号不再打断函数源码识别。`(x) => { // note
+ return x; }`、`(x) => { /* } */ return x; }`、`(x) => x /* ) */ > 0` 现在都判为函数源码（以前被归成 expression、包成 truthy 箭头 → `wait{for:'function'}` 首轮假通过）。**注释等同空白**：跳过注释但不改变词法状态，`return /*c*/ /}/.test(x)`、`(a = /*c*/ /[)]/…) => a`、`(a) => a + /*c*/ /[)]/` 也都是函数源码；头部注释（`function /*c*/ f(){}`、`async /*c*/ () => 1`、`function* /*c*/ g(){}`）同样支持；`function` 与生成器的 `*` 之间也允许注释（`function /*c*/ * g() {}`、`async /*c*/ function /*c*/ * g() {}` 都判为函数源码）。生成器 `function*` 分类正确，但用作 `wait{for:'function'}` 谓词时调用返回 truthy 迭代器 → 立即通过，属 JS 语义；需要布尔谓词请用非生成器函数。
+- **N4-b 关键字后的 regex**：新增 `REGEX_KEYWORDS`（`return`/`typeof`/`instanceof`/`case`/`yield`/`await`/`delete`/`void`/`in`/`of`/`new`/`do`/`else`/`throw`）与 `regexPosition()`，并用 `trackChar()` 维护「上一个非空白字符 + 当前标识符 + 空白间隔」状态——关键字之后的 `/…/` 被当作 regex 跳过（`(x) => { return /}/.test(x); }`、`(x) => typeof /}/.test(x)` 现在判为函数源码）。
+- **不变**：调用表达式 `(async()=>1)()`、`(0,()=>7)()`、`function(){}()`、`((a)=>a)` 仍按 expression；字符串/模板里的 `//`、括号、`/` 不受影响（先 `skipQuoted`）；除法 `a / 2`、`a++ / 2`、`a && /x/.test(a)` 仍正确；解析层 `new Function("return (src);")` 仍是最终门槛（只编译不执行）。 仍保留的极窄边界：语句位 `)`/`}` 后的 regex（`if (x) /}/…`）、文件尾 `//` 无换行（js 路径给可读错误）、`async => 1`（`(a /* ) */) => a` 现在为 true，不属于残余）。
+- **文档**：README 中英新增 0.1.14 行为节；0.1.13 run log 的「已知残余」移除 N4-a/N4-b（已在本轮修复）；新增 `docs/TEST-RUN-2026-11-01-0.1.14.md`。
+- 测试（最终 gate，2026-11-01 22:11:45–22:13:42）：`npm test` **126/126**、`live-e2e` **89/89**、`pointer-selector` **11/11**（0.1.13 届时套件为 112/89/11；按本轮 126 项套件回看为 118/126）。
+
 ## 0.1.13 — 2026-11-01
 
 收掉 0.1.12 审计记的 5 条 S3 follow-up（用户点名全修）：N4/N6/N7/N9/N2①。

@@ -790,3 +790,53 @@ test("N2①: ego_app_space resolves by id even when a name is also passed", asyn
 	assert.equal(openById.ok, true, JSON.stringify(openById));
 	assert.equal(openById.spaceId, 9002);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Seventh batch (0.1.14 contract N4-a / N4-b): comment and keyword-regex lexing
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── N4-a: a commented false predicate must really time out, not pass instantly ──
+test("N4-a: a commented false predicate times out instead of passing instantly", async () => {
+	const dump = scratchPath("n4a.dump");
+	const expression = "(x) => { // c\n return x > 5; }";
+	const out = await run(
+		"ego_app_wait",
+		{ name: "fake-space", for: "function", expression, timeoutMs: 600 },
+		{ env: { EGO_FAKE_DUMP: dump } }
+	);
+	assert.equal(out.ok, false, JSON.stringify(out));
+	assert.match(String(out.error ?? ""), /waitForFunction timed out after 600ms/);
+	const script = lastScript(dump);
+	assert.match(script, /timeout: 600/);
+	assert.match(script, /\/\/ c/);
+});
+
+// ── N4-b: a regex after a keyword is skipped, so the predicate is the bare source ──
+test("N4-b: a keyword-regex predicate is a bare function source", async () => {
+	const dump = scratchPath("n4b.dump");
+	const expression = "(x) => { return /}/.test(x); }";
+	const out = await run(
+		"ego_app_wait",
+		{ name: "fake-space", for: "function", expression, timeoutMs: 800 },
+		{ env: { EGO_FAKE_DUMP: dump } }
+	);
+	assert.equal(out.ok, false, JSON.stringify(out));
+	assert.match(String(out.error ?? ""), /waitForFunction timed out/);
+	const script = lastScript(dump);
+	assert.ok(
+		script.includes("waitForFunction((("),
+		"the predicate must be the bare function source, not a wrapper"
+	);
+	assert.ok(
+		!script.includes("waitForFunction(() => (("),
+		"a wrapper would make the arrow itself truthy and pass on the first poll"
+	);
+	assert.ok(script.includes("/}/.test(x)"), "the regex literal must survive into the generated script");
+});
+
+// ── N4: a comment-bearing true predicate still passes ──
+test("N4: a comment-bearing true predicate still passes", async () => {
+	const expression = "(x = 1) => { /* keep */ return x > 0; }";
+	const out = await run("ego_app_wait", { name: "fake-space", for: "function", expression, timeoutMs: 600 });
+	assert.equal(out.ok, true, JSON.stringify(out));
+});

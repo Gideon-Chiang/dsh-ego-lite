@@ -123,9 +123,9 @@ const makePage = (initialLabel = "p1") => {
 		waitForSelector: async () => {},
 		waitForURL: async () => {},
 		waitForLoadState: async () => {},
-		waitForFunction: async (fn) => {
+		waitForFunction: async (fn, _arg, options = {}) => {
 			const value = typeof fn === "function" ? await fn() : fn;
-			if (!value) throw new Error("page.waitForFunction timed out after 800ms on page " + label);
+			if (!value) throw new Error("page.waitForFunction timed out after " + (options && options.timeout ? options.timeout : 800) + "ms on page " + label);
 			return value;
 		},
 		waitForTimeout: async () => {

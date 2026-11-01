@@ -89,3 +89,74 @@ test("N4: regex literals and division are not mistaken for brackets", () => {
 	];
 	for (const [source, expected] of cases) assert.equal(isFunctionSource(source), expected, source);
 });
+
+test("N4-a: comments in a function body are skipped", () => {
+	const cases = [
+		["(x) => { // note\n return x; }", true],
+		["(x) => { /* } */ return x; }", true],
+		["(x) => x /* ) */ > 0", true],
+		["(x) => { /* unterminated }", false]
+	];
+	for (const [source, expected] of cases) assert.equal(isFunctionSource(source), expected, source);
+});
+
+test("N4-b: regex literals after keywords are skipped", () => {
+	const cases = [
+		["(x) => { return /}/.test(x); }", true],
+		["(x) => typeof /}/.test(x)", true],
+		["(x) => { return /\\)/.test(x); }", true],
+		["(x) => { const r = /[)]/; return r.test(x); }", true]
+	];
+	for (const [source, expected] of cases) assert.equal(isFunctionSource(source), expected, source);
+});
+
+test("N4: strings, templates and division are not misread as comments or regex", () => {
+	const cases = [
+		["(x) => x === \"})//\"", true],
+		["(x) => `${x} ) } //`", true],
+		["(a) => a / 2", true],
+		["(a) => a++ / 2", true],
+		["(x = 1) => { /* keep */ return x > 0; }", true],
+		["(async () => 1)()", false],
+		["(0, () => 7)()", false],
+		["function(){}()", false],
+		["((a) => a)", false]
+	];
+	for (const [source, expected] of cases) assert.equal(isFunctionSource(source), expected, source);
+});
+
+test("N4-a: a comment between return and a regex keeps function-source detection", () => {
+	assert.equal(isFunctionSource("(x) => { return /*c*/ /}/.test(x); }"), true, "(x) => { return /*c*/ /}/.test(x); }");
+});
+
+test("N4-a: a comment before a regex default parameter keeps function-source detection", () => {
+	assert.equal(isFunctionSource("(a = /*c*/ /[)]/.test(\")\")) => a"), true, "(a = /*c*/ /[)]/.test(\")\")) => a");
+});
+
+test("N4-a: a comment before a regex in an expression body keeps function-source detection", () => {
+	assert.equal(isFunctionSource("(a) => a + /*c*/ /[)]/.test(a)"), true, "(a) => a + /*c*/ /[)]/.test(a)");
+});
+
+test("N4-a: a header comment in a function declaration keeps function-source detection", () => {
+	assert.equal(isFunctionSource("function /*c*/ f(){}"), true, "function /*c*/ f(){}");
+});
+
+test("N4-a: a header comment in an async arrow keeps function-source detection", () => {
+	assert.equal(isFunctionSource("async /*c*/ () => 1"), true, "async /*c*/ () => 1");
+});
+
+test("N4-a: a header comment in a generator keeps function-source detection", () => {
+	assert.equal(isFunctionSource("function* /*c*/ g(){}"), true, "function* /*c*/ g(){}");
+});
+
+test("N4-a: a comment between function and its generator star keeps detection", () => {
+	assert.equal(isFunctionSource("function /*c*/ * g() {}"), true, "function /*c*/ * g() {}");
+});
+
+test("N4-a: a comment between async, function and the generator star keeps detection (false cases unchanged)", () => {
+	assert.equal(isFunctionSource("async /*c*/ function /*c*/ * g() {}"), true, "async /*c*/ function /*c*/ * g() {}");
+	// The call/sequence/parenthesised-arrow forms must stay expression sources.
+	for (const source of ["function(){}()", "(async () => 1)()", "(0, () => 7)()", "((a) => a)"]) {
+		assert.equal(isFunctionSource(source), false, source);
+	}
+});
