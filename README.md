@@ -81,6 +81,25 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 
 任意官方 API 都能通过 `ego_app_run` 使用（`const task = await taskSpace(...)`、`await task.page('p1')`、`page.*`、`ego.*`、`fetch`）。注意 `taskSpace()` 返回 Promise，**必须 `await`**，否则会得到 `task.page is not a function`。
 
+## 行为变化（0.1.11，升级前必读）
+
+0.1.11 是第三轮的收尾版：收掉剩余 S3，把 0.1.10 的 fail-closed 主题补齐到 `ego_app_tabs` / `ego_app_status`，并让生成脚本可以脱离真应用单测。
+
+1. **日志不再吞页面输出（A）**：`log` 只删除本次运行**真正的结果行**——带 token 的运行只删 `@@DSH_RESULT@@<token>` 开头的行；`ego_app_run`（plain）只删与本次选中结果行**完全相同**的那一行。页面自己打印的裸 `@@DSH_RESULT@@...` 会保留在 `log` 里，便于排查「结果行被谁写坏了」。解析顺序不变（哨兵 → onboarding → 退出码 → 纯文本 → 截断）。
+2. **读数失败安全化（B/H）**：生成脚本新增 `describeRead()`（try/catch、300 字符截断、不可打印回退 `"(unprintable)"`）。`ego_app_status` 的返回形状固定为 `{version, versionError, profiles, profilesError, tabs, tabsError, tabsSpaceId, spaces}`——`version`/`profiles` 失败改为 `versionError`/`profilesError`，不再把错误对象当数据；`tabs` 读不到时先用「最新 agent 空间」选一次再读（会短暂选择该空间，无其他副作用），成功则 `tabsSpaceId` 记录该空间（只有「选中后重读成功」才出现，不会与 `tabsError` 同时出现），仍失败才给 `tabsError`。
+3. **函数源码判定与前置解析（C/T/N-a）**：新增导出 `isFunctionSource()`（只用 `new Function` 解析、不执行函数体）。`ego_app_wait{for:'function'}` 传入完整函数源码时内联为 `(${expr})`，否则仍是旧的 `() => (${expr})`；`ego_app_js` 的 `fn` 参数走 function 模式，`mode:'auto'` 且表达式本身是函数源码时也走 function 模式，显式 `mode:'expression'|'statements'` 绝不自动切换。两处都会先去掉**尾部分号**再判定/包装（`() => 1;`、`1+1;` 都能用；statements body 保留原样），并在 **spawn 前**解析源码：语法错误直接可读失败（`needs a valid function source or expression` / `… is not valid JavaScript`），不 spawn、零副作用。顺带修掉 `ego_app_js{expression:"() => 1+1"}` 以前被包成 `() => (() => 1+1)`、返回值是函数、JSON 里 `value` 静默消失的问题（现在返回 `2`）。
+4. **终态/移交动作先取值（D）**：`ego_app_page{action:'close'}` 关闭前先取 `page.label`；`close`/`finish`/`complete`/`mark_error`/`handoff`/`takeover`/`wait_control` 脚本开头先取 `task.spaceId`，之后只用它——动作把 label/spaceId 变成 `undefined` 也不再丢结果字段。用户数据（selector、文件路径等）里的同名字面量不会被改写。
+5. **`create` 无 id 报错（F）**：`createTaskSpace()` 没有返回 space id 时直接报 `createTaskSpace() did not return a space id: …; no space was selected`，不再 `useTaskSpace(undefined)` 后静默失败。
+6. **`dialog` 行为补全（G/N）**：`waitMs` 负数/NaN → `0`、上限 `30000`，且 `waitForTimeout` 用 try/catch 包住——点击已发生也一定继续应答 dialog，不再出现「alert 未应答卡 15 s」；`promptText:""` 现在会真的传空串（只有缺省才表示不传）；结果带 trigger 的 `receipt`，`handled:false` 带 `note`（确认没有可应答的 dialog）；trigger 点击本身抛错时**仍会先应答 dialog**，然后才抛点击错误（错误里带 `any dialog it raised was still answered (handled=…)`），不会留下未应答的 dialog。
+7. **`ego_app_tabs` 与 space 列表证据（I/J/K/L/M/U/N-c/N-d/N-e）**：`scope:'space'` 结果带 `targetId`/`openedBy`；`scope:'space',action:'open'` 带 `opened`；`scope:'app',action:'open'` 带 `created`（`createTab()` 返回值的可读字符串），并注意 **app 的 open 也会在当前空间新增一个 managed Page、消耗 ego 每空间 8 页预算**。`scope:'app',action:'open'` 还会多带 `verified:boolean`（tab 列表是否真的变长——只是证据，不因 `false` 报失败，避免列表刷新竞态）。`open_page` 没有返回带 label 的 Page → 失败；`pages`/`tabs`/`adopt`/`release` 的 `task.pages()`/`task.tabs()` 不是数组 → 可读失败（`the TaskSpace page/tab list is unreadable`）；`adopt` 返回页后会回读 `task.pages()` 给出 `verified:boolean`（是否真的被 agent 管理）；`user_page` 兼容同步/异步 `task.userPage()`；`ego_app_tabs` 的空白 `name` 视同未给。
+8. **`ego_app_page{action:'fetch'}`（O）**：`options.saveAs` 会回显为 `saveAs`——工具与参数描述现在是「ego writes the file; the path is echoed back but not verified」，文件由 ego 负责写入，本调用**不验证**文件是否真的存在。
+9. **`ego_app_gesture`（P）**：API 什么都没返回时 `shown:null`（以前 `undefined` 也会报 true），`detail` 截断 500。
+10. **`describeReceipt`（Q）**：dialog 的 `message`/`defaultPrompt` 等页面可控文本截断 2000 并标注 `…[truncated N chars]`，避免页面文本撑爆回执。
+11. **`ego_app_run` 的 `truncated`（R）**：结果行完整、但输出尾部被截断时，结果也带 `truncated:true`；exit≠0 的诊断顺序不变（退出码优先于截断）。
+12. **新 hint（S）**：tab 读失败有专用 hint（`would not list its tabs…`，不再把 caller 指向 TaskSpace 列表）；adopt/release 与「每空间 8 页」Page budget 也各有 hint。
+13. **未闭合引号仍按纯 CSS（保守）**：`[data-x="a>>b]` 这类引号未闭合的写法不猜成 ego locator，仍作为纯 CSS 交给 `querySelector`，由测试锁死——宁可查不到，也不把合法 CSS 误判成 locator。
+14. **真浏览器 live 套件必须串行**：ego 的「当前选中 space/page」是应用级全局状态；两个会话/两个进程并发跑 live 套件会串页（0.1.9 轮曾实测到一次假红）。`npm run test:live` 请在同一会话里串行执行。
+
 ## 行为变化（0.1.10，升级前必读）
 
 0.1.10 是 0.1.9 的收尾轮：把「读不到状态」和「读到了但还没验证」彻底分开，并补掉 0.1.9 审计里的 S2 残留与 delta 项。
@@ -141,14 +160,15 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 
 ## 测试
 
-0.1.10 的实跑状态：`npm test` **48/48**、`live-e2e` **89/89**、`pointer-selector` **11/11**（2026-11-01，见 [run log](docs/TEST-RUN-2026-11-01-0.1.10.md)）。
+0.1.11 的实跑状态：`npm test` **91/91**、`live-e2e` **89/89**、`pointer-selector` **11/11**（见 [run log](docs/TEST-RUN-2026-11-01-0.1.11.md)）。
 
-- `npm test` —— 不需要 ego lite，48 项纯函数回归：`test/cli-outcome.test.mjs`（21 项：onboarding 预检、无哨兵、坏哨兵、非零退出、截断与 UTF-8 字节预算、哨兵 token）、`test/output-collector.test.mjs`（6 项：字节计数/截断/解码，字段 `text`）、`test/locator-detect.test.mjs`（5 项：`plainCssFrom` 对 `css=`、引号内的 locator 标记、各类 ego locator 的判定）、`test/ended-task-outcome.test.mjs`（16 项：`decideEndedTaskOutcome` 判定表，含 0.1.10 补齐的 `name`/`keep`/`requestedTimeoutMs` 等字段）。
-- `npm run test:live` —— 需要 ego lite 在运行、已完成 onboarding：
-  - `test/live-e2e.mjs`（89 项）：动作回执、下载落盘、文件选择器、子树快照、富粘贴、指针右键，以及 0.1.9 的 `close` 轮询/重试不新建空间/回读语义，和 0.1.10 的 fail-closed 读失败、`pageCreated`、`ego_app_js` mode、`wait{for:'function'}` 完整函数、`timeoutMs` 卫生、abort、nonce 伪造等。
+- `npm test` —— 不需要 ego lite，91 项纯函数回归：`test/cli-outcome.test.mjs`（onboarding 预检、无哨兵、坏哨兵、非零退出、截断与 UTF-8 字节预算、哨兵 token、**日志保留伪造哨兵行**）、`test/output-collector.test.mjs`（字节计数/截断/解码，字段 `text`）、`test/locator-detect.test.mjs`（`css=`、引号内/未闭合引号的保守判定、各类 ego locator）、`test/ended-task-outcome.test.mjs`（兜底判定表）、新增 `test/function-source.test.mjs`（`isFunctionSource` 真/假表）、新增 `test/generated-scripts.test.mjs` + `test/fake-cli/nodejs`（假 ego CLI 断言生成脚本：fail-closed 读数、`evaluate` 函数模式、终态取值、tabs/create 报错、`dialog` 的 `waitMs`）。
+- `npm run test:live` —— 需要 ego lite 在运行、已完成 onboarding；**真浏览器套件必须串行跑**（ego 的「当前选中 space/page」是应用级全局状态，并发会串页）。
+  - `test/live-e2e.mjs`（89 项）：动作回执、下载落盘、文件选择器、子树快照、富粘贴、指针右键，0.1.9 的 `close` 轮询/回读语义、0.1.10 的 fail-closed/`pageCreated`/`ego_app_js` mode/`wait function`/`timeoutMs` 卫生/abort/nonce，以及 0.1.11 的函数源码 auto 模式、终态取值、tabs 读数等。
   - `test/pointer-selector.mjs`（11 项）：`mouse_click` 只接受 x/y 或纯 CSS 选择器，ref/loc= 必须报错而不是点 (0,0)。
 
-0.1.10 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.10.md](docs/TEST-RUN-2026-11-01-0.1.10.md)；历史日志：
+0.1.11 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.11.md](docs/TEST-RUN-2026-11-01-0.1.11.md)；历史日志：
+[docs/TEST-RUN-2026-11-01-0.1.10.md](docs/TEST-RUN-2026-11-01-0.1.10.md)（0.1.10）、
 [docs/TEST-RUN-2026-11-01-0.1.9.md](docs/TEST-RUN-2026-11-01-0.1.9.md)（0.1.9）、
 [docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)（0.1.1–0.1.3）、
 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)（0.1.0 时代的 19 工具报告：正文 95/95、附录 A.3「99 项」是历史口径，**不是当前套件的计数**）。

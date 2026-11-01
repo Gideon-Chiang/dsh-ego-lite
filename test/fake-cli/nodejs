@@ -1,0 +1,253 @@
+// FAKE ego-browser CLI (test double) — never touches the real ego lite app.
+//
+// The plugin spawns `<executable> nodejs -e "await import(file:///…/task.mjs)"`
+// with cwd = process.cwd(). generated-scripts.test.mjs chdir()s into this
+// directory and configures the plugin with `executable: process.execPath`, so
+// node runs this file with argv ["nodejs", "-e", <entry>]. This file stubs the
+// ego runtime globals and then imports the REAL generated script, so the
+// plugin's script generation, runScript(), interpretCliOutcome() and each
+// tool's own post-condition code run unchanged.
+//
+// This file lives inside the plugin package ("type": "module"), so an
+// extension-less file here is loaded as ESM.
+//
+// Env switches (all optional; default = healthy app):
+//   EGO_FAKE_LIST=error|circular     ego.listTaskSpaces() -> {error} | circular object
+//   EGO_FAKE_TABS=error|unselected|unselected-fail  ego.listTabs(): always error | error until a
+//                                    space is selected | error again after the selection
+//   EGO_FAKE_SPACE_TABS=error        task.tabs() -> {error} (not an array)
+//   EGO_FAKE_PAGES=error             task.pages() -> {error} (not an array)
+//   EGO_FAKE_PROFILES=error          ego.listProfiles() -> {error}
+//   EGO_FAKE_VERSION=error           ego.getBrowserVersion() -> {error}
+//   EGO_FAKE_CREATE=no-id            ego.createTaskSpace() -> {}
+//   EGO_FAKE_CREATETAB=error|grow    ego.createTab() -> {error} | grows the app tab list
+//   EGO_FAKE_NEWPAGE=no-label|budget task.newPage() -> {} | throws "Page budget reached"
+//   EGO_FAKE_ADOPT=no-page|not-managed  task.adopt() -> {} | Page that stays unmanaged
+//   EGO_FAKE_RECEIPT=dialog|long|popup  page.click() -> dialog / 3000-char dialog / popup receipt
+//   EGO_FAKE_DIALOG=none             page.acceptDialog()/dismissDialog() -> false
+//   EGO_FAKE_GESTURE=none|long       ego.*Gesture* -> undefined | 900-char string
+//   EGO_FAKE_BREAK=label             page.close() drops page.label
+//   EGO_FAKE_BREAK=spaceid           task.spaceId getter throws after a terminal action
+//   EGO_FAKE_BREAK=waittimeout       page.waitForTimeout() throws
+//   EGO_FAKE_BREAK=click             page.click() throws
+//   EGO_FAKE_BREAK=release-agent     task.release() throws "created by the agent"
+//   EGO_FAKE_DUMP=<file>             append {script} for every spawned run (proves spawns)
+//   EGO_FAKE_CALLS=<file>            append runtime calls (useTaskSpace) a test forbids
+import fs from "node:fs";
+
+const argv = process.argv.slice(2);
+const entry = argv[argv.length - 1] ?? "";
+const match = /import\(\s*["']([^"']+)["']\s*\)/.exec(entry);
+if (!match) {
+	console.error("fake-cli: cannot find the import() entry in: " + entry.slice(0, 160));
+	process.exit(2);
+}
+const scriptUrl = match[1];
+const scriptPath = new URL(scriptUrl);
+
+const env = process.env;
+if (env.EGO_FAKE_DUMP) {
+	try {
+		const source = fs.readFileSync(scriptPath, "utf8");
+		fs.appendFileSync(env.EGO_FAKE_DUMP, JSON.stringify({ script: source }) + "\n");
+	} catch {}
+}
+const record = (call, args) => {
+	if (!env.EGO_FAKE_CALLS) return;
+	try {
+		fs.appendFileSync(env.EGO_FAKE_CALLS, JSON.stringify({ call, args }) + "\n");
+	} catch {}
+};
+
+const SPACE_ID = 9001;
+const SPACE_NAME = "fake-space";
+const state = { closed: false, broken: false, ownership: "agent", selected: false, extraTab: false };
+const row = (ownership) => ({ id: SPACE_ID, name: SPACE_NAME, ownership });
+const listSpaces = () => {
+	if (env.EGO_FAKE_LIST === "error") return { error: "injected read failure" };
+	if (env.EGO_FAKE_LIST === "circular") {
+		const bad = { error: "injected unreadable object" };
+		bad.self = bad; // JSON.stringify() throws — describeRead() must survive it
+		return bad;
+	}
+	if (state.closed) return { taskSpaces: [] };
+	return { taskSpaces: [row(state.ownership)] };
+};
+
+const clickReceipt = () => {
+	if (env.EGO_FAKE_RECEIPT === "dialog") return { dialog: { type: "alert", message: "fake dialog" } };
+	if (env.EGO_FAKE_RECEIPT === "long") return { dialog: { type: "alert", message: "x".repeat(3000) } };
+	if (env.EGO_FAKE_RECEIPT === "popup") return { popups: [{ label: "p2", targetId: "fake-target" }] };
+	return {};
+};
+
+const makePage = (initialLabel = "p1") => {
+	let label = initialLabel;
+	return {
+		get label() { return label; },
+		info: async () => ({ url: "about:blank", title: "fake" }),
+		snapshot: async () => "fake snapshot",
+		screenshot: async () => "/tmp/fake.png",
+		goto: async () => {},
+		reload: async () => {},
+		click: async () => {
+			if (env.EGO_FAKE_BREAK === "click") throw new Error("injected click failure");
+			return clickReceipt();
+		},
+		dblclick: async () => clickReceipt(),
+		hover: async () => {},
+		fill: async () => ({}),
+		press: async () => ({}),
+		selectOption: async () => ({}),
+		focus: async () => {},
+		evaluate: async (fn, arg) => (typeof fn === "function" ? await fn(arg) : fn),
+		cdp: async () => ({}),
+		waitForSelector: async () => {},
+		waitForURL: async () => {},
+		waitForLoadState: async () => {},
+		waitForFunction: async (fn) => {
+			const value = typeof fn === "function" ? await fn() : fn;
+			if (!value) throw new Error("page.waitForFunction timed out after 800ms on page " + label);
+			return value;
+		},
+		waitForTimeout: async () => {
+			if (env.EGO_FAKE_BREAK === "waittimeout") throw new Error("waitForTimeout got an invalid duration");
+		},
+		waitForEvent: async () => ({}),
+		waitForFileChooser: async () => ({}),
+		acceptDialog: async (text) => {
+			record("acceptDialog", text === undefined ? null : text);
+			return env.EGO_FAKE_DIALOG !== "none";
+		},
+		dismissDialog: async () => env.EGO_FAKE_DIALOG !== "none",
+		setInputFiles: async () => ({}),
+		events: async () => ({}),
+		fetch: async () => ({ status: 200, url: "about:blank", ok: true }),
+		close: async () => { if (env.EGO_FAKE_BREAK === "label") label = undefined; },
+		mouse: { click: async () => {}, move: async () => {}, down: async () => {}, up: async () => {}, wheel: async () => {} },
+		keyboard: { type: async () => {}, press: async () => {}, insertText: async () => {}, paste: async () => {}, down: async () => {}, up: async () => {} }
+	};
+};
+const page = makePage("p1");
+
+const terminal = () => {
+	if (env.EGO_FAKE_BREAK === "spaceid") state.broken = true;
+};
+const spaceTabs = () => env.EGO_FAKE_SPACE_TABS === "error"
+	? { error: "injected TaskSpace tab read failure" }
+	: [{ label: "p1", targetId: 1, title: "fake", url: "about:blank", active: true, openedBy: "agent", page }];
+const task = {
+	get spaceId() {
+		if (state.broken) throw new Error("task.spaceId is no longer readable: the space ended");
+		return SPACE_ID;
+	},
+	name: SPACE_NAME,
+	get ownership() { return state.ownership; },
+	pages: async () => (env.EGO_FAKE_PAGES === "error" ? { error: "injected page read failure" } : [{ label: "p1" }]),
+	page: () => page,
+	newPage: async () => {
+		if (env.EGO_FAKE_NEWPAGE === "no-label") return {};
+		if (env.EGO_FAKE_NEWPAGE === "budget") throw new Error("Page budget reached: ego allows at most 8 Pages per TaskSpace");
+		return makePage("p2");
+	},
+	userPage: async () => page,
+	tabs: async () => spaceTabs(),
+	adopt: async () => {
+		if (env.EGO_FAKE_ADOPT === "no-page") return {};
+		if (env.EGO_FAKE_ADOPT === "not-managed") return makePage("p9");
+		return makePage("p1");
+	},
+	release: async (label) => {
+		if (env.EGO_FAKE_BREAK === "release-agent") {
+			throw new Error("page " + label + " was created by the agent; close it instead of releasing it");
+		}
+	},
+	cdp: async () => ({}),
+	handOff: async () => { state.ownership = "agentDelegatedToUser"; },
+	waitForControl: async () => true,
+	finish: async (options = {}) => {
+		const closes = Array.isArray(options.keep) && options.keep.length === 0;
+		state.ownership = "user";
+		if (closes) state.closed = true;
+		terminal();
+		return {
+			spaceId: SPACE_ID,
+			closedSpace: closes,
+			keptManagedLabels: closes ? [] : ["p1"],
+			closedManagedLabels: closes ? ["p1"] : [],
+			preservedUnmanagedCount: 0
+		};
+	}
+};
+
+const gestureValue = () => {
+	if (env.EGO_FAKE_GESTURE === "none") return undefined;
+	if (env.EGO_FAKE_GESTURE === "long") return "x".repeat(900);
+	return "shown";
+};
+
+globalThis.ego = {
+	listTaskSpaces: async () => listSpaces(),
+	listTabs: async () => {
+		if (env.EGO_FAKE_TABS === "error") return { error: "injected app tab read failure" };
+		// Every CLI run starts with no TaskSpace selected; these modes reproduce that
+		// so a caller can prove it selects a space and retries (or reports the retry
+		// failure honestly).
+		if ((env.EGO_FAKE_TABS === "unselected" || env.EGO_FAKE_TABS === "unselected-fail") && !state.selected) {
+			return { error: "Task space not selected", error_code: "EGO_TASK_SPACE_NOT_SELECTED" };
+		}
+		if (env.EGO_FAKE_TABS === "unselected-fail") return { error: "injected app tab read failure after selection" };
+		const tabs = [{ index: 0, title: "fake", url: "about:blank", active: true }];
+		if (state.extraTab) tabs.push({ index: 1, title: "fake-tab", url: "about:blank", active: true });
+		return { tabs };
+	},
+	createTab: async () => {
+		if (env.EGO_FAKE_CREATETAB === "error") return { error: "injected createTab failure" };
+		if (env.EGO_FAKE_CREATETAB === "grow") state.extraTab = true;
+		return { index: 1, title: "fake-tab", url: "about:blank" };
+	},
+	listProfiles: async () => (env.EGO_FAKE_PROFILES === "error" ? { error: "injected profiles failure" } : { profiles: [] }),
+	getBrowserVersion: async () => (env.EGO_FAKE_VERSION === "error" ? { error: "injected version failure" } : { currentVersion: "fake" }),
+	closeTaskSpace: async () => {
+		state.closed = true;
+		state.actionDone = true;
+		terminal();
+		return SPACE_ID + " task space closed.";
+	},
+	completeTaskSpace: async () => {
+		state.ownership = "user";
+		terminal();
+		return SPACE_ID + " task space completed.";
+	},
+	markTaskSpaceError: async () => {
+		state.ownership = "user";
+		terminal();
+		return SPACE_ID + " task space marked as error.";
+	},
+	createTaskSpace: async () => (env.EGO_FAKE_CREATE === "no-id" ? {} : { id: SPACE_ID, spaceId: SPACE_ID }),
+	useTaskSpace: async (id) => { state.selected = true; record("useTaskSpace", id); },
+	deleteSpaces: async (options = {}) => ({ deletedSpaceIds: options.ids ?? [], skippedRunningSpaceIds: [] }),
+	setAgentTaskState: async () => {},
+	sendCDPMessage: async () => ({}),
+	animationHighlightMouseToPosition: async () => gestureValue(),
+	showAgentGesture: async () => gestureValue(),
+	handOffTaskSpace: async () => ({})
+};
+globalThis.taskSpace = async () => {
+	state.selected = true;
+	return task;
+};
+globalThis.takeOverTaskSpace = async () => {
+	state.ownership = "agent";
+	return { spaceId: SPACE_ID, name: SPACE_NAME, ownership: "agent" };
+};
+
+try {
+	await import(scriptUrl);
+	process.exit(0);
+} catch (error) {
+	console.error("Error: " + (error && error.message ? error.message : String(error)));
+	console.error("");
+	console.error("ego's nodejs process exited with code 1.");
+	process.exit(1);
+}

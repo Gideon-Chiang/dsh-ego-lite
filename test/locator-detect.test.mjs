@@ -72,3 +72,9 @@ test("quoted literals are CSS text, not ego locator syntax", () => {
 	assert.equal(plainCssFrom('div[data-x="a>>b"] >> nth=0'), null);
 	assert.equal(plainCssFrom('button:has-text("a>>b")'), null);
 });
+
+test("an unclosed quoted value is still plain CSS (conservative)", () => {
+	// No closing quote: the `>>` sits inside the quoted run, so it is not a
+	// locator marker. 0.1.11 locks this conservative reading (don't guess locators).
+	assert.equal(plainCssFrom('[data-x="a>>b]'), '[data-x="a>>b]');
+});

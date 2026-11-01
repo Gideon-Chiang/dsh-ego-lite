@@ -185,3 +185,42 @@ test("without a token the plain sentinel still works (ego_app_run contract)", ()
 	assert.equal(out.ok, true);
 	assert.deepEqual(out.result, { plain: true });
 });
+
+// ── 0.1.11 A: `log` keeps page output; only this run's result line is removed ──
+// Before 0.1.11 every line starting with the sentinel was dropped from `log`,
+// which hid a page-echoed lookalike — exactly the output a caller debugging a
+// mismatch needs to see.
+
+test("a token run keeps a forged bare sentinel line in the log", () => {
+	const out = interpretCliOutcome({
+		code: 0,
+		stdout: `${SENTINEL}{"spoofed":true}\n`,
+		stderr: `${SENTINEL}abc123{"real":true}\n`,
+		token: "abc123"
+	});
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.result, { real: true });
+	assert.match(String(out.log ?? ""), /@@DSH_RESULT@@\{"spoofed":true\}/);
+	assert.doesNotMatch(String(out.log ?? ""), /"real":true/);
+});
+
+test("a plain run keeps a forged sentinel line and removes only the selected result line", () => {
+	const out = interpretCliOutcome({
+		code: 0,
+		stdout: `page says hello\n${SENTINEL}{"spoofed":true}\n`,
+		stderr: `${SENTINEL}{"real":true}\n`
+	});
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.result, { real: true });
+	assert.match(String(out.log ?? ""), /page says hello/);
+	assert.match(String(out.log ?? ""), /@@DSH_RESULT@@\{"spoofed":true\}/);
+	assert.doesNotMatch(String(out.log ?? ""), /"real":true/);
+});
+
+// ── 0.1.11 R: a complete sentinel result keeps the truncation flag ──
+test("a complete sentinel result reports truncated:true when the output was truncated", () => {
+	const out = interpretCliOutcome({ code: 0, stdout: "", stderr: `@@DSH_RESULT@@{"done":true}\n`, truncated: true });
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.result, { done: true });
+	assert.equal(out.truncated, true);
+});

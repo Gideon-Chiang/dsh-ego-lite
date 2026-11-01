@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.11 — 2026-11-01
+
+第三轮收尾（0.1.10 → 0.1.11）：清零剩余 S3，把 0.1.10 的 fail-closed 主题补齐到 `ego_app_tabs`，并让生成脚本第一次可以脱离真应用、用假 CLI 单测。
+
+- **A 日志不再吞页面输出**：`interpretCliOutcome` 的 `clean()` 只删除本次运行**真正的结果行**——带 token 的运行只删 `@@DSH_RESULT@@<token>` 开头的行；`ego_app_run`（token `""`）只删与本次选中结果行**完全相同**的那一行。页面自己打印的裸 `@@DSH_RESULT@@...` 现在会留在 `log` 里（以前被整行吞掉），解析顺序不变（哨兵 → onboarding → 退出码 → 纯文本 → 截断）。
+- **B 读数失败细节安全化**：生成脚本新增 `describeRead(value)`（try/catch、`JSON.stringify` 结果截断 300 字符、异常回退 `String(value)`、再失败回退 `"(unprintable)"`）；`readTaskSpaces` 的错误文案改用它，`readSpacesHelper` 拆成 `describeReadHelper` + `readTaskSpaces` 供 tabs 复用——读数失败时错误里带得出细节，又不会把巨大/循环对象原样抛给宿主。
+- **C 函数源码判定**：新增导出 `isFunctionSource(value)`（`new Function` 只解析、不执行函数体）。`ego_app_wait{for:'function'}` 用完整函数源码时内联 `(${expr})`，否则仍是旧的 `() => (${expr})`；`ego_app_js` 的 `fn` 参数走 function 模式，`mode:"auto"` 且表达式本身是函数源码时也走 function 模式，显式 `mode:"expression"|"statements"` 绝不自动切换。这同时修掉一个静默错误：`ego_app_js{expression:"() => 1+1"}` 以前被包成 `() => (() => 1+1)`、返回函数，JSON 里 `value` 静默消失；现在按函数源码处理并返回 `2`。
+- **D 终态/移交动作先取值**：`ego_app_page{action:'close'}` 关闭前先取 `page.label`（生成脚本里存为 `__closedLabel`）；`close`/`finish`/`complete`/`mark_error`/`handoff`/`takeover`/`wait_control` 脚本开头取 `const __spaceId = task.spaceId`，之后只用它——动作把 label/spaceId 变成 `undefined` 也不再丢结果字段。用户数据（selector、文件路径等）里出现 `task.spaceId` 字面量不会被改写（只改手写生成片段）。
+- **E `ego_app_tabs` 读数 fail-closed**：`scope:"app"` 的 `ego.listTabs()` 没有 `tabs` 数组时 `ok:false`（错误含 `the app tab list is unreadable`）；`scope:"space"` 的 `task.tabs()` 不是数组时 `ok:false`（错误含 `the TaskSpace tab list is unreadable`）。`action:"open"` 时同样不再把读失败降级成 `tabs: []`（`createTab()` 的结果不作为成功证据）。
+- **F `create` 失败可读**：`createTaskSpace()` 没有返回 space id 时抛 `createTaskSpace() did not return a space id: <describeRead(created)>; no space was selected`，不再 `useTaskSpace(undefined)` 后静默失败。
+- **G `dialog{waitMs}` 卫生**：非有限值或负数按 `0` 处理（默认仍是 400），不再把非法时长传给 `waitForTimeout`。
+- **H `ego_app_status` 形状固定**：返回 `{version, versionError, profiles, profilesError, tabs, tabsError, tabsSpaceId, spaces}`——`version`/`profiles` 失败改为 `versionError`/`profilesError`（不再把带 `.error` 的对象当数据）；`tabs` 读不到时先用「最新 agent 空间」选一次再读（会短暂选择该空间，无其他副作用），成功则 `tabsSpaceId` 记录之，仍失败才给 `tabsError`。
+- **I `ego_app_tabs` 结果补全**：`scope:'space'` 带 `targetId`/`openedBy`，`action:'open'` 带 `opened`；`scope:'app',action:'open'` 带 `created`（`createTab()` 返回值的 `describeRead` 字符串），且 app 的 open 也会在当前空间新增 managed Page、消耗 ego 每空间 8 页预算。
+- **J `open_page` 必须拿到 Page**：`newPage()` 没有返回带 label 的 Page → 失败（不再 `ok:true` 且 `page` 被 lossless 丢掉）。
+- **K `pages`/`tabs`/`adopt` 读数守卫**：`task.pages()`/`task.tabs()` 非数组 → 可读失败（`the TaskSpace page/tab list is unreadable`），不再裸 `TypeError: …map is not a function`。
+- **L `adopt` 给证据**：`adopt()` 没返回 Page → 失败；成功后回读 `task.pages()` 返回 `verified:boolean`（是否真的被 agent 管理），不再只看调用返回值。
+- **M `user_page` 兼容同步/异步**：改 `await task.userPage()`，两种返回形态都能工作。
+- **N `dialog` 补全**：`promptText:""` 现在会真的传空串（只有缺省才表示不传）；结果带 trigger 的 `receipt`，`handled:false` 带 `note`；`waitMs` 负数/NaN → 0、上限 30000，且 `waitForTimeout` 被 try/catch 包住——点击已发生也一定继续应答 dialog。
+- **O `fetch` 的 `saveAs` 回显**：`options.saveAs` 回显为 `saveAs`；工具/参数描述现在是「ego writes the file; the path is echoed back but not verified」，本调用不验证文件。
+- **P `gesture` 空返回**：`shown` 在 API 返回空时是 `null`（以前 `undefined` 也报 true），`detail` 截断 500。
+- **Q `describeReceipt` 截断**：dialog 的 `message`/`defaultPrompt` 等页面可控文本截断 2000 并标注 `…[truncated N chars]`。
+- **R `ego_app_run` 的 `truncated`**：结果行完整但输出尾部被截断 → 结果带 `truncated:true`；exit≠0 的诊断顺序不变。
+- **S 新 hint**：tab 读失败专用 hint（`would not list its tabs…`），adopt/release 与 Page budget（8 页）各一条。
+- **T 前置解析**：`wait{for:'function'}` 与 `ego_app_js` 在 spawn 前用 `new Function` 只解析目标源码，语法错误 → 可读失败（`needs a valid function source or expression` / `… is not valid JavaScript`），不 spawn、零副作用。
+- **U `ego_app_tabs` 空间解析**：统一用 `spaceArg`（空白 name 视同未给）。
+- **N-a 尾部分号归一**：`ego_app_js`/`ego_app_wait{for:'function'}` 判定与包装前先去掉尾部分号——`() => 1;`、`1+1;` 现在可用；statements body 保留原样。
+- **N-c app `open` 证据**：`ego_app_tabs{scope:'app',action:'open'}` 结果新增 `verified:boolean`（tab 列表是否真的变长）；只是证据，不因 `false` 报失败（避免列表刷新竞态）。
+- **N-d/N-e adopt/release 守卫**：`adopt`/`release` 回读 `task.pages()` 非数组 → 可读失败（`the TaskSpace page list is unreadable`）。
+- **N-f dialog 点击失败仍应答**：trigger 点击抛错时先应答 dialog，再抛点击错误（错误带 `any dialog it raised was still answered (handled=…)`），不会留下未应答 dialog。
+- **N-g `tabsSpaceId` 出现时机**：只有「选中空间后重读成功」才出现，不再与 `tabsError` 同时出现。
+- **保守的 locator 策略**：未闭合引号（如 `[data-x="a>>b]`）仍按纯 CSS 处理，不猜成 ego locator；已被测试锁死——宁可查不到，也不把合法 CSS 误判成 locator。
+- **测试**：新增 `test/function-source.test.mjs`（`isFunctionSource` 真/假表）与 `test/generated-scripts.test.mjs` + `test/fake-cli/nodejs`（假 ego CLI 断言生成脚本的 B/C/D/E/F/G 与 0.1.10 既有形状），`cli-outcome`/`locator-detect` 增量。**真浏览器 live 套件必须串行跑**：ego 的「当前选中 space/page」是应用级全局状态，并发会串页。
+- **文档**：README 中英新增 0.1.11 行为节（A–G、未闭合引号保守、串行约束）；新增 `docs/TEST-RUN-2026-11-01-0.1.11.md`。测试计数（最终 gate，2026-11-01 19:07:14–19:09:02）：`npm test` **91/91**、`live-e2e` **89/89**、`pointer-selector` **11/11**（0.1.10 为 48/89/11）。
+
 ## 0.1.10 — 2026-11-01
 
 0.1.9 的收尾轮：修 0.1.9 验证/审计报告里的 **3 个 S2 残留**（读数失败被当成空间消失、任务结束兜底把已达成状态判失败、`keepPages` 未验证——最后一项已在上一轮补掉）、delta 审计的 **4 个 NEW 项**，以及 verifier §13.2 的 `list` fail-open 等问题。
