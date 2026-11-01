@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.8 — 2026-11-01
+
+按 0.1.7 调查报告修"能干活但会说谎"的 5 类问题（核心：`ok:true` 要可信）。
+
+- **A1 `wait_control` 不再写死成功**：`control: true` 是字面量，`waitForControl()` 返回假值也照样报成功。
+  现在等待结束后回读 `ownership`，不是 `agent` 就报错；成功时返回实测的 `ownership`。顺带补上 `timeoutMs` 参数
+  （此前用户扫码登录超过 3 分钟必然撞插件级 180 s 超时，且失败时回执/提示全丢）。
+- **A2 终结/破坏性动作改为"回读后再说成功"**：`close` 检查空间是否真的从列表消失；`finish`/`complete`/
+  `mark_error` 检查归属是否已变 `user`；`handoff` 检查是否变 `agentDelegatedToUser`；`release` 检查 Page 是否
+  真的不再受管。不满足就报错（README 第 7 条自己也写着 `closeTaskSpace` 会"返回成功但不生效"）。
+- **A3 枚举白名单**：`key` 的 `action` 拼错不再落到 `keyboard.press("Enter")`；`dialog` 的 `action` 不再
+  "只有 `=== 'dismiss'` 才 dismiss"（现按小写归一后校验，`Dismiss` 会被明确当作 dismiss 并在返回值里写实）；
+  `cdp` 的 `scope`、`wait` 的 `for`、`gesture` 的 `action` 同样白名单校验；`navigate` 必须给 `url`
+  （不再静默开 `about:blank`）；`upload` 必须有非空 `files`（不再静默清空 file input）。
+- **A5 结果完整性**：哨兵改为**取最后一行**匹配（脚本最后打印，页面文本伪造的早行不再可能顶替）；
+  输出被 `maxOutputBytes` 截断时明确报"输出超限"，而不是误报"payload was not valid JSON"。
+- **N11**：`:has-text()` / `>>` 这类 Playwright 风格选择器不再被当成纯 CSS 塞进 `querySelector`，
+  提前报可读错误。
+- **N15**：`finish(keep:false)` 之后紧跟 `delete` 的报错文案说明"空间已随之消失，没有可删的"，
+  不再看起来像失败。
+- **文档**：英文 README 的"对话框跨调用自动关闭"是**反的**，已改成实测结论并补齐 14–17 条语义；
+  中文第 16 条 `timeoutMs:8000` 的解法实测**仍然失败**（8.2 s），改为"预算 ≥ 15 s 或先滚动"
+  （实测 15 s 通过 11.7 s、先滚动 0.36 s）；注明 `pointer` 没有 `timeoutMs`；`docs/TEST-REPORT.md`
+  标注为 0.1.0 时代历史记录。
+- 测试：`npm test` 12 项（+3：哨兵取最后一行、截断报错两种）；`live-e2e` **36 项**
+  （+2：枚举拼错必须报错、`wait_control` 回读归属）。
+
 ## 0.1.7 — 2026-11-01
 
 收掉第四轮审查提出的四处残留（均不影响主流程）。

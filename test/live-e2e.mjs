@@ -1,5 +1,5 @@
 /**
- * Integration regression for dsh-ego-lite 0.1.2 against the REAL ego lite app.
+ * Integration regression for dsh-ego-lite (live) against the REAL ego lite app.
  * Loads the plugin's apply() with a minimal fake ctx, then drives the tools.
  */
 // Opt-in: needs the ego lite app running, past onboarding. Not part of `npm test`.
@@ -86,7 +86,7 @@ check(
 const again = await call("ego_app_space", { action: "delete", ids: [id] });
 check(
 	"delete on a gone id explains itself",
-	again.ok === false && /may already be closed or deleted/.test(again.error ?? ""),
+	again.ok === false && /(nothing left to delete|may have been closed or deleted)/.test(again.error ?? ""),
 	{ ok: again.ok, error: (again.error ?? "").slice(0, 160) }
 );
 
@@ -275,6 +275,31 @@ check(
 	"an empty saveAs is rejected with a readable message",
 	emptySave && emptySave.ok === false && /non-empty absolute path/.test(String(emptySave.error ?? "")),
 	{ result: emptySave }
+);
+
+// Typos in `action`/`scope`/`for` must be rejected, never "performed".
+const typoTargets = [
+	["ego_app_key", { name: "e2e-进阶", action: "typ", text: "x" }],
+	["ego_app_cdp", { name: "e2e-进阶", scope: "tasks", method: "Runtime.evaluate" }],
+	["ego_app_wait", { name: "e2e-进阶", for: "nope" }],
+	["ego_app_gesture", { name: "e2e-进阶", action: "wave" }]
+];
+const typoResults = [];
+for (const [tool, args] of typoTargets) {
+	const out = await call(tool, args);
+	typoResults.push({ tool, rejected: out.ok === false && /unknown /.test(String(out.error ?? "")) });
+}
+check(
+	"unknown action/scope/for values are rejected instead of acting",
+	typoResults.every((row) => row.rejected),
+	typoResults
+);
+
+const waitOwnership = await call("ego_app_space", { action: "wait_control", name: "e2e-进阶" });
+check(
+	"wait_control reports the ownership it actually observed",
+	waitOwnership.ok === true && waitOwnership.control === true && waitOwnership.ownership === "agent",
+	{ ok: waitOwnership.ok, ownership: waitOwnership.ownership }
 );
 
 const advFinish = await call("ego_app_space", { action: "finish", name: "e2e-进阶", keep: false });

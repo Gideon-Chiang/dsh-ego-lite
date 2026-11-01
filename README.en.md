@@ -45,9 +45,14 @@ The CLI is auto-detected under `C:\Program Files\Citro Labs\ego lite\Application
 - After `handoff`/`takeover` browser commands are paused until `wait_control`
 - `deleteSpaces` removes user-owned spaces only; agent-owned ids hang
 - Spaces in `agentDelegatedToUser` cannot be closed through any API — close them in the ego UI
-- Dialogs are auto-dismissed between CLI invocations; use `ego_app_dialog{trigger}` to click and answer in one call
+- **An unanswered JavaScript dialog is NOT auto-dismissed between calls.** Measured on ego 0.6.2.5: it blocks every later round on that page (~15 s, `PageEvaluationTimeoutError`). Answer it as soon as a `receipt.dialog` is reported, ideally with `ego_app_dialog{trigger}` in one call.
+- Action **receipts** (`popups`, `dialog`) are returned by click/fill/key/pointer/select/upload/download/file_chooser; the key is omitted when the API returned nothing and `{}` when it returned a receipt with nothing to report.
+- Downloads must call `saveAs()` inside the same script — `ego_app_download` does it for you.
+- ego's default action timeout (~3 s) is not enough for elements far below the viewport. On long pages give `timeoutMs` (**budget >= 15 s**) or scroll the target into view first — 8 s usually still fails.
+- A file picker only opens on a user-activated click. CSS triggers are pre-scrolled; `@ref` / `loc=` triggers cannot be, so scroll manually before using them.
+- `ego_app_pointer.mouse_click` takes x/y or one plain CSS selector, never a snapshot ref.
 
-See [docs/TEST-REPORT.md](docs/TEST-REPORT.md) for the 99-case matrix.
+See [docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md) for the current run log (the older [TEST-REPORT](docs/TEST-REPORT.md) is the 0.1.0 matrix).
 
 ## License
 

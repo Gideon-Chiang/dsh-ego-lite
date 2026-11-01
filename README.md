@@ -98,7 +98,7 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 13. onboarding 未完成时 CLI 打印提示并**以退出码 0 退出**，不执行脚本也不产出结果 → 工具据此判定为失败并给出 hint，不会返回 `{ok:true, data:null}`。
 14. `receipt.dialog` 报出的对话框必须**紧接着**用 `ego_app_dialog` 应答：实测 0.6.2.5 里未应答的对话框会跨调用残留，该页后续每轮都会超时（`ego_app_js` 报 `PageEvaluationTimeoutError`，约 15 s；guide 的"跨轮自动关闭"在此版本不成立）。
 15. 下载必须在**同一脚本内** `saveAs()`：临时文件随该轮结束删除 → `ego_app_download` 已内建。
-16. **ego 默认动作超时（约 3 s）对远在视口下方的元素不够用**：同一元素默认超时报 `element is not visible in the viewport`，加 `timeoutMs: 8000` 就成功。长页面上请显式给 `timeoutMs`（`click`/`fill`/`pointer`/`file_chooser`/`download` 都支持），否则容易误判成插件回归。
+16. **ego 默认动作超时（约 3 s）对远在视口下方的元素不够用**：同一元素默认超时报 `element is not visible in the viewport`。实测在仓库自带 fixture 上：默认失败（3.0 s）→ `timeoutMs:8000` **仍然失败**（8.2 s）→ `15000` 通过（约 11.7 s）→ **先 `scrollIntoView` 再用默认超时通过（0.36 s）**。所以正确做法是「预算 ≥ 15 s」或「先把目标滚进视口」，不要照抄 8000。支持 `timeoutMs` 的有 `click`/`fill`/`file_chooser`/`download`/`wait_event`；`pointer` 没有这个参数。
 17. **文件选择器只在用户激活的点击下打开**：ego 遇到需要先滚动进视口的元素时会退化成程序化 `element.click()`，Chromium 因此不弹选择框。工具已对**纯 CSS** trigger 先 `scrollIntoView` 再点击来保住真实输入；`@ref` / `loc=` / `xpath=` 的 trigger 无法预滚动，长页面上请先用 `ego_app_js` 滚进视口再调用。
 
 ## 与官方 skill 的关系
@@ -111,7 +111,7 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 
 - `npm test` —— 不需要 ego lite：CLI 输出判定（onboarding 预检、无哨兵、坏哨兵、非零退出等）9 项。
 - `npm run test:live` —— 需要 ego lite 在运行、已完成 onboarding：
-  - `test/live-e2e.mjs`（29 项）：动作回执、下载落盘、文件选择器超时与恢复、子树快照、富粘贴、指针右键等。
+  - `test/live-e2e.mjs`（34 项）：动作回执、下载落盘、文件选择器超时与恢复、子树快照、富粘贴、指针右键等。
   - `test/pointer-selector.mjs`（11 项）：`mouse_click` 只接受 x/y 或纯 CSS 选择器，ref/loc= 必须报错而不是点 (0,0)。
 
 测试页在 `test/fixtures/interaction.html`（带点击坐标捕获），可用 `EGO_E2E_FIXTURE` 指向别处；

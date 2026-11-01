@@ -70,3 +70,27 @@ test("malformed sentinel payload fails instead of becoming null", () => {
 	assert.equal(out.ok, false);
 	assert.match(out.error, /not valid JSON/);
 });
+
+test("the last sentinel line wins over an earlier lookalike", () => {
+	const out = interpretCliOutcome({
+		code: 0,
+		stdout: `@@DSH_RESULT@@{"spoofed":true}
+`,
+		stderr: `@@DSH_RESULT@@{"real":"yes"}
+`
+	});
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.result, { real: "yes" });
+});
+
+test("truncated output without a sentinel reports the size limit, not a JSON error", () => {
+	const out = interpretCliOutcome({ code: 0, stdout: "", stderr: "@@DSH_RESULT@@{\"partial\":", truncated: true });
+	assert.equal(out.ok, false);
+	assert.match(out.error, /maxOutputBytes/);
+});
+
+test("truncated output with a broken payload also reports the size limit", () => {
+	const out = interpretCliOutcome({ code: 0, stdout: "", stderr: "@@DSH_RESULT@@{broken", truncated: true });
+	assert.equal(out.ok, false);
+	assert.match(out.error, /maxOutputBytes/);
+});
