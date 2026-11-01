@@ -59,7 +59,7 @@ dsh plugin --profile web add file:C:/path/to/dsh-ego-lite
 | 状态 | `ego_app_status`（CLI 路径、ego 版本、Space 列表、profile、app 级标签） |
 | Space | `ego_app_space`：`list` `open` `create` `use` `claim` `pages` `tabs` `open_page` `adopt` `release` `user_page` `wait_control` `handoff` `takeover` `finish` `complete` `mark_error` `set_state` `close` `delete` |
 | 标签 | `ego_app_tabs`（`scope: "app" | "space"`，可 `open`） |
-| 导航/观察 | `ego_app_navigate`、`ego_app_snapshot`（viewport / full_page）、`ego_app_screenshot` |
+| 导航/观察 | `ego_app_navigate`、`ego_app_snapshot`（viewport / full_page / subtree）、`ego_app_screenshot` |
 | 交互 | `ego_app_click`、`ego_app_fill`、`ego_app_key`（press/type/insert_text/paste/down/up）、`ego_app_pointer`（hover/dblclick/drag/scroll/move/mouse_click/down/up）、`ego_app_select`、`ego_app_page`（reload/close/focus/events/file_chooser/fetch/wait_event） |
 | 等待 | `ego_app_wait`（selector / url / load_state / function / timeout） |
 | 脚本/协议 | `ego_app_js`、`ego_app_cdp`（page / task / app）、`ego_app_run`（任意官方脚本，逃生口） |
