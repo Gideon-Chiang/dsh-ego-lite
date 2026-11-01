@@ -94,3 +94,60 @@ test("truncated output with a broken payload also reports the size limit", () =>
 	assert.equal(out.ok, false);
 	assert.match(out.error, /maxOutputBytes/);
 });
+
+// ── 0.1.9: one order for every branch: sentinel -> onboarding -> exit code -> plain text -> size ──
+
+test("plain text over maxOutputBytes stays a success for ego_app_run, flagged truncated", () => {
+	// A full_page snapshot or a bulk innerText can easily pass 1 MiB; 0.1.8's
+	// order made that a failure and blamed a sentinel the caller never needed.
+	const out = interpretCliOutcome({
+		code: 0,
+		stdout: "",
+		stderr: `${"x".repeat(64)}\n`,
+		allowPlainText: true,
+		truncated: true
+	});
+	assert.equal(out.ok, true);
+	assert.equal(out.result, null);
+	assert.equal(out.truncated, true);
+	assert.equal(typeof out.log, "string");
+});
+
+test("a non-zero exit code wins over truncation", () => {
+	const out = interpretCliOutcome({ code: 7, stdout: "", stderr: "Error: boom\n", truncated: true });
+	assert.equal(out.ok, false);
+	assert.match(out.error, /Error: boom/);
+	assert.doesNotMatch(out.error, /maxOutputBytes/);
+});
+
+test("structured output truncated without a sentinel still reports the size limit", () => {
+	const out = interpretCliOutcome({ code: 0, stdout: "", stderr: '{"partial":', truncated: true });
+	assert.equal(out.ok, false);
+	assert.match(out.error, /maxOutputBytes/);
+});
+
+test("a complete sentinel result survives truncation", () => {
+	// The sentinel and its whole payload arrived; truncation only cut trailing
+	// noise, so the run succeeded.
+	const out = interpretCliOutcome({
+		code: 0,
+		stdout: `${"y".repeat(128)}\n`,
+		stderr: `${SENTINEL}{"done":true}\n`,
+		truncated: true
+	});
+	assert.equal(out.ok, true);
+	assert.deepEqual(out.result, { done: true });
+});
+
+test("truncation does not mask the onboarding preflight", () => {
+	const out = interpretCliOutcome({
+		code: 0,
+		stdout: ONBOARDING_NOTICE,
+		stderr: "",
+		allowPlainText: true,
+		truncated: true
+	});
+	assert.equal(out.ok, false);
+	assert.match(out.error, /onboarding is not complete/i);
+	assert.match(out.hint, /onboarding/i);
+});

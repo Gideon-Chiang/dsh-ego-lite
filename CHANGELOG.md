@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.9 — 2026-11-01
+
+按 0.1.8 验证报告修「`ok:true` 已经可信、`ok:false` 还不可信」的一批问题：本轮重点是让**失败结论也有实测依据**，并收掉 0.1.8 修复自身引入的回归。
+
+- **`close` 改为轮询回读（修 0.1.8 的新回归）**：0.1.8 在 `closeTaskSpace()` 之后只读一次空间列表，而 ego 要 24–26 ms 才把条目移出列表，于是**已经关掉的空间被报成失败**（两个独立执行者实测 10/13、18/33 次误报，错误文案还把 agent 引向一次毫无必要的 `handoff`/`claim`）。现在照 `delete` 的做法轮询（12×150 ms，约 2.4 s）直到 id 消失：只有 ego **明确拒绝**（`closeTaskSpace()` 回执带 `error`，例如空间已委派给用户）、轮询后**仍在列表**、或空间列表**读不出来**（见下 `unreadable`）才 `ok:false`，错误文案改为「等 ~2400 ms 后仍列出（observed ownership=…）」+ 下一步 `hint`，不再断言「这是委派给用户的空间」。
+- **严格空间解析：除 `open` 外绝不创建空间**：官方 `taskSpace(name)` 的语义是 **reuse *or* create**，所以「close 失败 → 重试 close」会静默新建一个同名空间、再把它关掉并返回 `ok:true`：看起来修好了，实际什么都没修还多出一个空间。现在除 `open` 外的空间动作（`close`/`finish`/`complete`/`mark_error`/`handoff`/`wait_control`/`delete`/`pages`/`tabs`/…）一律先 `listTaskSpaces()` 解析**已存在**的空间、再按 id 恢复；**空间动作（含 `open`；`list`/`create` 除外）必须显式给 `name` 或 `id`**——空白 name（如 `"   "`）等同缺省——省略时宿主侧直接报 `name (string) or id (number) is required for this action`（附 hint、零副作用，避免误关最新空间）；只有 page 工具（`navigate`/`snapshot`/`click`/`fill`/…）可省略 name，取最新的 agent 空间（没有则取最新的 `agentDelegatedToUser` 空间）；找不到时统一报 `… is currently open. This action only operates on an existing space; it never creates one.`（0.1.8 那句「Never creates a space」的注释从本轮起才与事实一致）。
+- **六个动作统一回读语义（行为变化）**：`finish`/`complete`/`mark_error`/`close`/`handoff`/`wait_control` 共用同一套「轮询后回读」；`ownership` 是实测值；「空间已消失」统一记作 `"closed"`——对 `close`/`finish`/`complete`/`mark_error` 算成功（终结类动作不再靠 `if (… && …)` 在空间已被别处关闭时「真空通过」），对 `handoff`/`wait_control`/`takeover` 算失败（没有空间就不可能达成目标状态）。
+- **读数失败不等于空间消失**：`listTaskSpaces()` 返回错误对象或缺少 `taskSpaces` 时，`close`/`finish`/`complete`/`mark_error` 不再把读失败当「空间已关闭」报 `ok:true`，而是**报失败**，`error` 里带 `observed ownership: unreadable`（hint 指向先 `list`/`ego_app_status` 再重试）；任务结束兜底的探针若读失败会**放弃兜底、保留原始错误**。`unreadable` 表示状态没能确认——既不是成功，也不是「已完成转换」。
+- **任务结束导致输出被丢弃（修 `close` 的残留误报）**：ego 在动作触发的任务结束时可能 hard-stop 脚本并**丢弃已缓冲输出（含哨兵）**，只打印 `This task space is no longer assigned to the agent: its task has ended … browser commands are paused` 并退出 0。旧版会把这种**其实已经成功**的 `close` 报成「脚本没跑」。现在 `ego_app_space` 的 `close`/`finish`/`complete`/`mark_error`/`handoff`/`wait_control`/`takeover` 命中该通知时会先做一次独立只读 `listTaskSpaces()` 复核：终结类动作可能返回 `{ok:true, …, receipt:null, verifiedBy:"listTaskSpaces", note:"…"}`（**`receipt:null` 不是失败**，表示回执被 ego 丢了、结论来自独立复核；`finish` 的 `keep` 在该路径上也是 `null`；空间不在列表 → `ownership:"closed"`，仍在列表但 ownership 为 `user` → 对 `finish(keep:true)`/`complete`/`mark_error` 也算成功）；`handoff`/`takeover`/`wait_control` 若复核到**目标态已经达成**（`agentDelegatedToUser`/`agent`/`agent`）同样返回 `ok:true`（`handedOff`/`tookOver`/`control` + `verifiedBy`），不再因为「脚本没跑完」把已达成的状态判失败，空间已消失时这三个仍失败。**按 name 寻址且空间已消失时，兜底结果的 `spaceId` 可能为 `null`**（插件拿不到 id，只有按 id 传入才回显）——`spaceId:null` + `verifiedBy:"listTaskSpaces"` 是成功，不是缺字段。`finish{keepPages:[...]}` 命中该通知时**不恢复**（page 级结果无法用空间列表验证，保留原始失败）；`finish(keep:false)` 在该路径上若空间仍以 `user` 列出则失败（要关掉却没关掉，hint 指向按 id `delete` 或面板关闭）。兜底只在「命中该通知且原判失败」时触发，正常路径仍返回 ego 原生回执；同一通知出现在 `ego_app_run` 的纯文本输出里时仍按成功返回，不会被误判为失败。
+- **`finish` 透出 ego 回执**：结果里的 `receipt` 带 `closedSpace`/`keptManagedLabels`/`closedManagedLabels`/`preservedUnmanagedCount`，不必再靠回读推断 keep 的真实效果；`complete`/`mark_error` 的 `receipt` 是 ego 返回的字符串（此前这些回执被丢弃）。另外 `finish(keep:false)` 的期望状态**由请求决定**：即使 ego 回执缺 `closedSpace` 字段，也要求空间消失，否则失败（不再依赖回执形状）。
+- **`wait_control` 的 `timeoutMs` 真正可用**：0.1.8 只读了参数、没写进 schema（schema 驱动的调用方看不见）；现在已进 schema，并把有效值 clamp 到插件级预算内（`config.timeoutMs - 5000`；默认配置下有效上限 175 s、不传该参数时默认 165 s），结果带 `requestedTimeoutMs`/`timeoutMs`/`clamped`。
+- **更正 0.1.8 的两处 `timeoutMs` 措辞**：0.1.8 说的「补上 `timeoutMs` 参数」只兑现了一半（代码读了，schema 没有）；「此前登录超过 3 分钟必撞 180 s」读起来像已经解决，但**180 s 的插件级预算一字未动**——本轮做的是把请求值 clamp 进预算并在结果里说明，想等得更久仍只能调大配置 `timeoutMs`，不是工具参数能绕过的。
+- **`ego_app_run` 截断回归修好**：0.1.8 把截断检查排到了 `allowPlainText` 前面，纯文本输出一大就 `ok:false`（`full_page` 快照或批量 `innerText` 很容易到 1 MiB）；现在纯文本超限仍是 `ok:true` + `truncated:true`，onboarding 预检与退出码判定也不会再被截断分支遮住。同时 `maxOutputBytes` 改为按 **UTF-8 字节**计（此前按 UTF-16 码元，中文要约 3 倍才判定超限）。
+- **N11 locator 判定补全**：`css=`（等价于原样 CSS）、后缀形式 `:has-text("…")`/`:text-is("…")`/`:text("…")`、`>> nth=N` 这些 ego locator 不再被塞进 `document.querySelector`（预滚动/滚动捕获会先剥掉 `css=`，其余形式交给 ego 自己的 locator 解析）；`mouse_click` 接受 `css=`，其余 locator 形式给出可读拒绝；`mouse_click` 用 CSS 选择器时先滚进视口点击，**点击后恢复原视口位置**（与 trigger 点击一致）。
+- **A4 超时预算是整次调用**：`download`/`file_chooser`/`wait_event` 的 `timeoutMs` 现在是整次调用的总预算——trigger 点击用「剩余预算」（下限 500 ms），不再被点击与等待器各自 `Math.max(3000,t)` 花一次。
+- **`delete` 不再「报成功但没删成」**：轮询后 `stillListed` 非空、或 ego 回执里 `skippedRunningSpaceIds` 非空，现在都**报错**（带 hint），不再 `ok:true` 了事；结果里带 `deletedIds`/`stillListed`/`skippedRunningSpaceIds`/`receipt`（ego 回执 `{deletedSpaceIds, skippedRunningSpaceIds}`）；支持 `id`（单数）与 `scope:"task"`，`scope:"all"` 明确拒绝。更严格：`force:true` **不能**绕过 agent-owned 目标（一律 `ok:false`，错误含 `force:true cannot make ego delete…`，目标 id 点名列出），`ids` 里有不存在的 id 会点名，按 `name` 命中多个空间会报错要求改传 `ids`。
+- **枚举守卫补齐（A3 同类）**：`select{}`（没给 value/label/index，此前会清空选择）、`fill{}`（缺 value，此前写入空串）、`tabs{action:"open"}` 缺 url（此前开 `about:blank`）、`wait{for:"url"}` 缺 url 现在都返回可读错误，不再静默执行。
+- **新的失败都带 `hint`**：`close`/`finish`/`complete`/`mark_error`/`handoff`/`wait_control` 的回读失败原本只有 error 文本，现在统一从观测到的状态推导下一步（先 `list` 看现状、用户在控制时先 `wait_control`、空间已消失就说明无需重试等）。 hint 有优先级：具体观测（`task has ended`/`unreadable`/实测 `ownership`）会覆盖泛化的「检查安装/完成 onboarding」提示。
+- **文档**：修 0.1.8 验证报告 §6 的 M1–M7、M11——`npm test`/`live-e2e` 计数（M1/M2）、过时的「99 项矩阵…全部通过」（M3：那是 0.1.0 时代的数字，历史报告已标「历史记录」）、英文 README 把 0.1.1 日志称作 "the current run log"（M4）、`timeoutMs` 措辞（M5/M6）、README 第 16 条像穷举的 `timeoutMs` 清单（M7）、以及「动作转换成功之后仍可能返回 `ok:false`」这一行为变化（M11）。
+- 测试：`npm test` **43/43**（`cli-outcome` 17、`output-collector` 6、`locator-detect` 4、`ended-task-outcome` 16）；`live-e2e` **72/72**、`pointer-selector` **11/11**（`EGO_E2E_REQUIRE=1`，2026-11-01 实跑；0.1.8 为 12 单测 / 36 live）。0.1.9 的实测记录见 `docs/TEST-RUN-2026-11-01-0.1.9.md`。
+
 ## 0.1.8 — 2026-11-01
 
 按 0.1.7 调查报告修"能干活但会说谎"的 5 类问题（核心：`ok:true` 要可信）。
@@ -20,7 +41,7 @@
   提前报可读错误。
 - **N15**：`finish(keep:false)` 之后紧跟 `delete` 的报错文案说明"空间已随之消失，没有可删的"，
   不再看起来像失败。
-- **文档**：英文 README 的"对话框跨调用自动关闭"是**反的**，已改成实测结论并补齐 14–17 条语义；
+- **文档**：英文 README 的"对话框跨调用自动关闭"是**反的**，已改成实测结论并补齐对应语义条目（英文 README 用 bullet 而非编号）；
   中文第 16 条 `timeoutMs:8000` 的解法实测**仍然失败**（8.2 s），改为"预算 ≥ 15 s 或先滚动"
   （实测 15 s 通过 11.7 s、先滚动 0.36 s）；注明 `pointer` 没有 `timeoutMs`；`docs/TEST-REPORT.md`
   标注为 0.1.0 时代历史记录。

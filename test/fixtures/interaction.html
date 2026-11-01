@@ -29,6 +29,16 @@
 </section>
 
 <section>
+  <h2>select</h2>
+  <select id="choice">
+    <option value="a">A</option>
+    <option value="b">B</option>
+    <option value="c">C</option>
+  </select>
+  <div>selected: <code id="choiceOut">a</code></div>
+</section>
+
+<section>
   <h2>right click</h2>
   <div id="ctx">right-click me</div>
   <div>contextmenu <code id="ctxOut">0</code> · auxclick <code id="auxOut">0</code></div>
@@ -106,6 +116,7 @@
   $("pick").addEventListener("click", () => $("hiddenFile").click());
   $("panelPick").addEventListener("click", () => $("hiddenFile").click());
   $("panel").addEventListener("scroll", () => { $("panelScroll").textContent = String(Math.round($("panel").scrollTop)); });
+  $("choice").addEventListener("change", () => { $("choiceOut").textContent = $("choice").value; });
   $("hiddenFile").addEventListener("change", () => {
     $("fileOut").textContent = Array.from($("hiddenFile").files).map((f) => f.name).join(",") || "(none)";
   });

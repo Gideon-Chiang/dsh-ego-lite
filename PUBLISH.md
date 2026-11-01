@@ -1,13 +1,16 @@
-# 发布清单（dsh-ego-lite 0.1.0）
+# 发布清单（dsh-ego-lite）
 
 本文件记录发布所需的全部步骤与当前状态。仓库内容已就绪，只差两步需要账号授权。
+
+> 本轮版本 **0.1.9**（2026-11-01）。正文表格里的 0.1.0 状态与「19 个工具」是最初发布的记录，保留作为流程底稿；
+> 当前仓库在 `E:\Work-Project\DSH_Research\my-dsh-plugins\dsh-ego-lite`，工具数为 **20**（0.1.1 起新增 `ego_app_download`）。
 
 ## 当前状态
 
 | 项 | 状态 |
 |---|---|
-| 发布包内容（`npm pack`） | ✅ 8 个文件 / 22.5 kB，`lib`、`cordis.patch.yml`、README、LICENSE、CHANGELOG、docs |
-| 干净环境安装验证 | ✅ 在临时项目 `npm install <tgz>` 后 `import('dsh-ego-lite')` 成功注册 19 个工具 |
+| 发布包内容（`npm pack`） | ✅ 8 个文件 / 22.5 kB，`lib`、`cordis.patch.yml`、README、LICENSE、CHANGELOG、docs（0.1.0 实测） |
+| 干净环境安装验证 | ✅ 在临时项目 `npm install <tgz>` 后 `import('dsh-ego-lite')` 成功注册 19 个工具（0.1.0；0.1.1 起为 20 个） |
 | npm 包名可用性 | ✅ `dsh-ego-lite` 在 registry.npmjs.org 返回 404（未占用） |
 | git 仓库 | ✅ `main` 分支已提交，remote 指向 `git@github.com:Gideon-Chiang/dsh-ego-lite.git` |
 | GitHub HTTPS | ❌ 连接被重置（本机网络），改用 SSH |
@@ -36,7 +39,7 @@ ssh -T git@github.com     # 期望：Hi Gideon-Chiang! You've successfully authe
 ## 第 2 步：推送到 GitHub
 
 ```powershell
-cd C:\Users\BL\dsh-ego-lite
+cd E:\Work-Project\DSH_Research\my-dsh-plugins\dsh-ego-lite
 git push -u origin main
 ```
 
@@ -46,7 +49,7 @@ git push -u origin main
 
 ```powershell
 npm login                     # 浏览器授权
-cd C:\Users\BL\dsh-ego-lite
+cd E:\Work-Project\DSH_Research\my-dsh-plugins\dsh-ego-lite
 npm publish
 ```
 
@@ -75,7 +78,7 @@ dsh plugin --profile web add dsh-ego-lite
 dsh plugin --profile web add github:Gideon-Chiang/dsh-ego-lite
 
 # 本地 tarball
-dsh plugin --profile web add file:C:/path/to/dsh-ego-lite-0.1.0.tgz
+dsh plugin --profile web add file:C:/path/to/dsh-ego-lite-<version>.tgz
 ```
 
 安装后重启 dsh（插件不热加载；profile 内是物理副本，改源码后需重新复制）。
