@@ -115,7 +115,9 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
   - `test/pointer-selector.mjs`（11 项）：`mouse_click` 只接受 x/y 或纯 CSS 选择器，ref/loc= 必须报错而不是点 (0,0)。
 
 测试页在 `test/fixtures/interaction.html`（带点击坐标捕获），可用 `EGO_E2E_FIXTURE` 指向别处；
-ego lite 未运行时 live 测试会打印 SKIP 并以 0 退出。
+ego lite 未运行时两个 live 套件都会打印 SKIP 并以 0 退出。
+注意参数校验的两种错误形态：`ego_app_download` 缺 `saveAs` 由宿主直接抛 `ToolArgsError`（schema 必填），
+其余工具的错误都以 `{ok:false, error}` 返回。
 
 历史记录见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md) 与 [docs/TEST-RUN-2026-10-31.md](docs/TEST-RUN-2026-10-31.md)。
 

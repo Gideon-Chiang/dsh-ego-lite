@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.6 — 2026-11-01
+
+修复 0.1.5 核验报告里的 3 个问题。
+
+- **等待器提前 reject 会绕过整段修复。** `try { chooser = await chooserPromise }` 只包住"取结果"，
+  而等待器在 `waitForFileChooser()` 调用时就启动；`timeoutMs` 设得很短时它会在脚本走到 try 之前 reject，
+  Node 按 unhandled rejection 处理直接杀进程 → 回执与提示全部丢失（`timeoutMs:1` 实测：裸超时、无回执）。
+  现在**在 arm 时就挂 `.catch(e => ({ __error: e }))`**，之后分支处理；`download` / `wait_event(popup|download)`
+  同样处理。trigger 点击自己抛错时也会带上回执与新提示（"trigger click itself failed … retry with a larger timeoutMs"）。
+- **防御性 CDP 清理不再可能盖掉回执。** 原来 `await page.cdp(...)` 无超时且跑在 `throw` 之前，CDP 不回时
+  调用方只会看到插件级 180 s 超时。现在**先构造 Error**，清理调用带 `{ timeout: 3000 }` 并吞掉自身错误。
+- **预滚动会把页面留在下方。** 0.1.4 给纯 CSS trigger 加了 `scrollIntoView`，但点完不回来 → 之后点页面顶部元素
+  即使 `timeoutMs:9000` 也失败（ego 向上自动滚动不可靠）。现在 trigger 点击前记下 `window.scrollY`、点击后恢复
+  （实测 380 → 380，且随后点顶部元素正常）。`ref=`/`loc=` trigger 不做预滚动，因此不受影响。
+- 文档/测试：`test/live-e2e.mjs` 新增 3 项（提前过期仍带回执 / 滚动位置恢复 / 滚动后顶部元素可点），共 **32 项**；
+  live-e2e 在 ego lite 未运行时也打印 SKIP 并退出 0（README 的说法现在两种套件都成立）；
+  补充说明 `saveAs` 缺失由宿主抛 `ToolArgsError`，其余工具仍返回 `{ok:false,error}`。
+
 ## 0.1.5 — 2026-11-01
 
 修复 0.1.4 核验报告里的 2 个 file_chooser 残留问题 + 3 处描述/测试缺口。

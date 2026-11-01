@@ -27,6 +27,10 @@ const check = (label, ok, detail) => {
 };
 
 const status = await call("ego_app_status");
+if (!status.ok || !status.data) {
+	console.log("SKIP  ego lite is not running (or has not finished onboarding); start it and rerun: npm run test:live");
+	process.exit(0);
+}
 check("status returns data (no silent null)", status.ok === true && status.data !== null, { ok: status.ok, spaces: status.data?.spaces?.length });
 
 const opened = await call("ego_app_space", { action: "open", name: "e2e-回归" });
@@ -210,6 +214,39 @@ check(
 	subtree.ok === true && /inside frame/.test(String(subtree.snapshot ?? "")),
 	{ ok: subtree.ok, ref: iframeRef ? `@${iframeRef[1]}` : null, error: subtree.error ? String(subtree.error).slice(0, 120) : undefined }
 );
+
+// A waiter that expires before the click resolves must still explain itself.
+const expiring = await call("ego_app_page", {
+	action: "file_chooser", name: "e2e-进阶", trigger: "#pick", timeoutMs: 1, files: [uploadFixture]
+});
+check(
+	"an expired waiter still carries the click receipt",
+	expiring.ok === false && /click receipt/.test(String(expiring.error ?? "")),
+	{ ok: expiring.ok, error: String(expiring.error ?? "").slice(0, 150) }
+);
+await call("ego_app_dialog", { action: "accept", name: "e2e-进阶" }).catch(() => {});
+
+// The trigger click pre-scrolls; the page must be put back where it was so a
+// later click on a top-of-page element still works.
+await call("ego_app_navigate", { name: "e2e-进阶", url: fixture });
+await call("ego_app_js", { name: "e2e-进阶", expression: "window.scrollTo(0, 380); window.scrollY" });
+const scrollBefore = Number((await call("ego_app_js", { name: "e2e-进阶", expression: "window.scrollY" })).value);
+const scrolledChooser = await call("ego_app_page", {
+	action: "file_chooser", name: "e2e-进阶", trigger: "#pick", timeoutMs: 8000, files: [uploadFixture]
+});
+const scrollAfter = Number((await call("ego_app_js", { name: "e2e-进阶", expression: "window.scrollY" })).value);
+check(
+	"a trigger click restores the previous scroll offset",
+	scrolledChooser.ok === true && Math.abs(scrollAfter - scrollBefore) < 5,
+	{ before: scrollBefore, after: scrollAfter }
+);
+const topAfterScroll = await call("ego_app_click", { name: "e2e-进阶", selector: "#pop" });
+check(
+	"a top-of-page element still clicks after a trigger click scrolled",
+	topAfterScroll.ok === true,
+	{ ok: topAfterScroll.ok, error: String(topAfterScroll.error ?? "").slice(0, 120) }
+);
+await call("ego_app_dialog", { action: "accept", name: "e2e-进阶" }).catch(() => {});
 
 const advFinish = await call("ego_app_space", { action: "finish", name: "e2e-进阶", keep: false });
 check("advanced space finishes cleanly", advFinish.ok === true, advFinish);
