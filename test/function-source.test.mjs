@@ -66,3 +66,26 @@ test("call expressions are not function sources (R3)", () => {
 		assert.equal(isFunctionSource(source), true, source);
 	}
 });
+
+test("N4: nested default parameters are still function sources", () => {
+	const cases = [
+		["(x = foo()) => x > 0", true],
+		["(a = (1)) => a", true],
+		["((a) => a)", false],
+		["(async () => 1)()", false]
+	];
+	for (const [source, expected] of cases) assert.equal(isFunctionSource(source), expected, source);
+});
+
+test("N4: regex literals and division are not mistaken for brackets", () => {
+	const cases = [
+		["(x) => /\\)/.test(x)", true],
+		["(s) => /\\d+/.test(s)", true],
+		["(x) => x.replace(/\\)/g, \"\")", true],
+		["(a) => a / 2", true],
+		["(a) => (1) / 2", true],
+		["(a) => a++ / 2", true],
+		["(a) => /unterminated", false]
+	];
+	for (const [source, expected] of cases) assert.equal(isFunctionSource(source), expected, source);
+});

@@ -700,3 +700,93 @@ test("N5: leftover and skipped are both reported when the delete leaves work", a
 	assert.equal(typeof out.hint, "string");
 	assert.match(String(out.hint ?? ""), /ego only deletes spaces whose agent task has ended/);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sixth batch (0.1.13 contract N4 / N6 / N7 / N9 / N2①)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── N4: a default-parameter arrow must be the predicate, not a wrapped value ──
+test("N4a: wait treats a default-parameter arrow as the predicate (false times out)", async () => {
+	const falsePredicate = await run(
+		"ego_app_wait",
+		{ name: "fake-space", for: "function", expression: "(x = 0) => x > 0", timeoutMs: 800 }
+	);
+	assert.equal(falsePredicate.ok, false, JSON.stringify(falsePredicate));
+	assert.match(String(falsePredicate.error ?? ""), /waitForFunction timed out/);
+
+	const truePredicate = await run(
+		"ego_app_wait",
+		{ name: "fake-space", for: "function", expression: "(x = 1) => x > 0", timeoutMs: 800 }
+	);
+	assert.equal(truePredicate.ok, true, JSON.stringify(truePredicate));
+});
+
+// ── N4: regex literals inside the body must not unbalance the bracket lexer ──
+test("N4b: wait treats a regex-literal arrow as the predicate (false times out)", async () => {
+	const expression = "(x) => /" + String.fromCharCode(92) + ")/.test(x)";
+	const out = await run("ego_app_wait", { name: "fake-space", for: "function", expression, timeoutMs: 800 });
+	assert.equal(out.ok, false, JSON.stringify(out));
+	assert.match(String(out.error ?? ""), /waitForFunction timed out/);
+});
+
+// ── N6: the poll-budget wording is baked as a literal, never a runtime template ──
+test("N6: generated scripts carry the literal '~2400 ms', not a runtime template", async () => {
+	const dump = scratchPath("n6.dump");
+	const out = await run("ego_app_space", { action: "close", name: "fake-space" }, { env: { EGO_FAKE_DUMP: dump } });
+	assert.equal(out.ok, true, JSON.stringify(out));
+	const script = lastScript(dump);
+	assert.match(script, /within ~2400 ms/);
+	assert.match(script, /after ~2400 ms/);
+	assert.doesNotMatch(script, /SPACE_WATCH_TIMEOUT_MS/, "the constant name must not leak into the script");
+	assert.doesNotMatch(script, /\$\{/, "no unresolved template expression may remain");
+});
+
+// ── N7: a non-string Page label is usable; a null label still fails ──
+test("N7: a non-string Page label is usable; a null label still fails", async () => {
+	const numeric = await run("ego_app_click", { name: "fake-space", selector: "#target" }, { env: { EGO_FAKE_PAGE: "label-number" } });
+	assert.equal(numeric.ok, true, JSON.stringify(numeric));
+	assert.equal(numeric.page, 42);
+
+	const nullLabel = await run("ego_app_click", { name: "fake-space", selector: "#target" }, { env: { EGO_FAKE_PAGE: "label-null" } });
+	assert.equal(nullLabel.ok, false, JSON.stringify(nullLabel));
+	assert.match(String(nullLabel.error ?? ""), /page\(\) did not return a Page:.*no command ran against a Page/);
+});
+
+// ── N9: structured success log is capped; ego_app_run keeps the full log ──
+test("N9a: structured success caps log at 16000 with logTruncated/logLength", async () => {
+	const short = await run("ego_app_js", { name: "fake-space", expression: "1+1" }, { env: { EGO_FAKE_NOISE: "1" } });
+	assert.equal(short.ok, true, JSON.stringify(short));
+	assert.equal(short.log, "fake-noise-line");
+	assert.equal("logTruncated" in short, false);
+	assert.equal("logLength" in short, false);
+
+	const long = await run("ego_app_js", { name: "fake-space", expression: "1+1" }, { env: { EGO_FAKE_NOISE: "huge" } });
+	assert.equal(long.ok, true, JSON.stringify(long));
+	assert.equal(typeof long.log, "string");
+	assert.equal(long.log.length, 16000, "structured log is capped at 16000 characters");
+	assert.equal(long.logTruncated, true);
+	assert.equal(long.logLength, 20000, "logLength keeps the original length");
+});
+
+test("N9b: ego_app_run keeps the full log (documented contract)", async () => {
+	const out = await run("ego_app_run", { script: 'console.log("y".repeat(20000));' });
+	assert.equal(out.ok, true, JSON.stringify(out));
+	assert.equal(typeof out.log, "string");
+	assert.equal(out.log.length, 20000, "ego_app_run must not apply the structured log cap");
+	assert.equal("logTruncated" in out, false);
+});
+
+// ── N2①: ego_app_space resolves by id first when both name and id are passed ──
+test("N2①: ego_app_space resolves by id even when a name is also passed", async () => {
+	const byId = await run("ego_app_space", { action: "pages", name: "fake-space", id: 9002 }, { env: { EGO_FAKE_SPACES: "idwins" } });
+	assert.equal(byId.ok, true, JSON.stringify(byId));
+	assert.equal(byId.spaceId, 9002, "id must win over the conflicting name");
+
+	const byName = await run("ego_app_space", { action: "pages", name: "fake-space" }, { env: { EGO_FAKE_SPACES: "idwins" } });
+	assert.equal(byName.ok, true, JSON.stringify(byName));
+	assert.equal(byName.spaceId, 9001, "a unique name still resolves without an id");
+
+	const openById = await run("ego_app_space", { action: "open", name: "brand-new", id: 9002 }, { env: { EGO_FAKE_SPACES: "idwins" } });
+	assert.equal(openById.ok, true, JSON.stringify(openById));
+	assert.equal(openById.spaceId, 9002);
+});

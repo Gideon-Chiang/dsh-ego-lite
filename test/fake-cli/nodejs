@@ -28,11 +28,12 @@
 //   EGO_FAKE_RECEIPT=dialog|long|popup  page.click() -> dialog / 3000-char dialog / popup receipt
 //   EGO_FAKE_DIALOG=none             page.acceptDialog()/dismissDialog() -> false
 //   EGO_FAKE_ACCEPT=error            page.acceptDialog()/dismissDialog() throws
-//   EGO_FAKE_PAGE=no-label           task.page() -> {} (no Page)
+//   EGO_FAKE_PAGE=no-label|label-number|label-null  task.page() -> {} | label 42 | label null
 //   EGO_FAKE_DUPLICATE=1             two spaces share SPACE_NAME (ambiguity)
+//   EGO_FAKE_SPACES=idwins           two spaces with different ids/names (id-vs-name probe)
 //   EGO_FAKE_OWNERSHIP=user          list rows claim user ownership
 //   EGO_FAKE_DELETE=skipped          deleteSpaces() reports the id as skipped-running
-//   EGO_FAKE_NOISE=1|big             stderr noise line (short | 1000 chars) before the result
+//   EGO_FAKE_NOISE=1|big|huge        stderr noise line (short | 1000 | 20000 chars) before the result
 //   EGO_FAKE_DELETE=skipped|skipped-leftover  deleteSpaces() reports skipped ids (listed / still listed)
 //   EGO_FAKE_GESTURE=none|long       ego.*Gesture* -> undefined | 900-char string
 //   EGO_FAKE_BREAK=label             page.close() drops page.label
@@ -63,6 +64,7 @@ if (env.EGO_FAKE_DUMP) {
 }
 if (env.EGO_FAKE_NOISE === "1") console.error("fake-noise-line");
 if (env.EGO_FAKE_NOISE === "big") console.error("x".repeat(1000));
+if (env.EGO_FAKE_NOISE === "huge") console.error("x".repeat(20000));
 const record = (call, args) => {
 	if (!env.EGO_FAKE_CALLS) return;
 	try {
@@ -73,7 +75,7 @@ const record = (call, args) => {
 const SPACE_ID = 9001;
 const SPACE_NAME = "fake-space";
 let listTabsCalls = 0;
-const state = { closed: false, broken: false, ownership: "agent", selected: false, extraTab: false };
+const state = { closed: false, broken: false, ownership: "agent", selected: false, selectedId: null, extraTab: false };
 const row = (ownership) => ({ id: SPACE_ID, name: SPACE_NAME, ownership });
 const listSpaces = () => {
 	if (env.EGO_FAKE_LIST === "error") return { error: "injected read failure" };
@@ -86,6 +88,7 @@ const listSpaces = () => {
 	if (state.closed) return { taskSpaces: [] };
 	const ownership = env.EGO_FAKE_OWNERSHIP ?? state.ownership;
 	if (env.EGO_FAKE_DUPLICATE === "1") return { taskSpaces: [row(ownership), { ...row(ownership), id: SPACE_ID + 1 }] };
+	if (env.EGO_FAKE_SPACES === "idwins") return { taskSpaces: [row(ownership), { id: SPACE_ID + 1, name: "other-space", ownership }] };
 	return { taskSpaces: [row(ownership)] };
 };
 
@@ -158,12 +161,17 @@ const spaceTabs = () => env.EGO_FAKE_SPACE_TABS === "error"
 const task = {
 	get spaceId() {
 		if (state.broken) throw new Error("task.spaceId is no longer readable: the space ended");
-		return SPACE_ID;
+		return state.selectedId ?? SPACE_ID;
 	},
 	name: SPACE_NAME,
 	get ownership() { return state.ownership; },
 	pages: async () => (env.EGO_FAKE_PAGES === "error" ? { error: "injected page read failure" } : [{ label: "p1" }]),
-	page: () => (env.EGO_FAKE_PAGE === "no-label" ? {} : page),
+	page: () => {
+		if (env.EGO_FAKE_PAGE === "no-label") return {};
+		if (env.EGO_FAKE_PAGE === "label-number") return { ...page, label: 42 };
+		if (env.EGO_FAKE_PAGE === "label-null") return { ...page, label: null };
+		return page;
+	},
 	newPage: async () => {
 		if (env.EGO_FAKE_NEWPAGE === "no-label") return {};
 		if (env.EGO_FAKE_NEWPAGE === "budget") throw new Error("Page budget reached: ego allows at most 8 Pages per TaskSpace");
@@ -263,8 +271,9 @@ globalThis.ego = {
 	showAgentGesture: async () => gestureValue(),
 	handOffTaskSpace: async () => ({})
 };
-globalThis.taskSpace = async () => {
+globalThis.taskSpace = async (id) => {
 	state.selected = true;
+	if (typeof id === "number") state.selectedId = id;
 	return task;
 };
 globalThis.takeOverTaskSpace = async () => {

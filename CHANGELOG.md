@@ -1,21 +1,33 @@
 # Changelog
 
+## 0.1.13 — 2026-11-01
+
+收掉 0.1.12 审计记的 5 条 S3 follow-up（用户点名全修）：N4/N6/N7/N9/N2①。
+
+- **N4 `isFunctionSource` 改为括号匹配**：删除形状正则，新增 `isBareFunctionSource()`（按括号/花括号配对、跳过引号与模板字符串的 `${…}`）。参数里带嵌套括号的箭头（`(x = foo()) => x > 0`、`(a = (1)) => a`）现在被正确识别为函数源码——以前 `wait{for:'function'}` 会把它们包成 `() => (…)`，箭头本身 truthy 导致**首次轮询即假通过**；现在必须等到真实条件。0.1.13 起这四类也**全部按表达式处理**（整段必须恰好是一个函数表达式）：`(async () => 1)()`、`(0, () => 7)()`、`function(){}()`、`((a) => a)`——其中 **`function(){}()` 在 0.1.12 旧版曾判为函数源码**，另外三个旧版本来就是 expression（不是「两版都 false」）。正则字面量里的括号也不会被误判（`(x) => /\)/.test(x)` 中 `/` 被识别为 regex，跳过 `[...]` 字符类与转义）。
+- **N6 轮询毫秒文案来自常量**：11 处错误文案里的 `~2400 ms` 改为插件侧 `~${SPACE_WATCH_TIMEOUT_MS} ms` 模板插值——生成后的脚本里仍是字面 `~2400 ms`（对外文案不变），改常量时文案自动跟随，且没有运行时字符串拼接。
+- **N7 Page 的 `label` 不再要求 string**：`pagePrelude` 守卫从 `typeof page.label !== "string"` 放宽为 `page.label === undefined || page.label === null`——非字符串 label 的 Page 可用，`label` 缺失/`null` 仍可读失败。非字符串 label 会**原样进入结果字段**（如 `page: page.label`），消费方不要假设它一定是 string。
+- **N9 结构化成功的 `log` 上限**：新增 `STRUCTURED_LOG_LIMIT = 16000` 与 `structuredLog()`：成功结果的 `log` 超限时截断并附 `logTruncated:true` + `logLength:<原长>`；未超限形状不变。**两个字段含义不同**：`logTruncated` 表示结构化 `log` 被 16000 字符截断，`truncated` 表示原始 CLI 输出被 `maxOutputBytes` 截断；`logLength` 是 **UTF-16 `.length`（字符数）**，不是字节数。`ego_app_run` 保持完整 log 契约。
+- **N2① `ego_app_space` 的 `id` 优先于 name（行为变化）**：`spaceArg` 改为 id 优先，与 Page 工具/`ego_app_tabs{scope:'space'}` 一致——**同时传 `name` 和 `id` 时命中 `id`**（与 schema 一直的声明一致）；`id` 参数描述改为 "It wins over name for every action…"。**`id:0` 会命中用户默认空间**（0 是真实空间、不是占位值）——现有调用若为「备注」传了 `id:0`，升级后会真的改打用户空间；只传 `name` 才按 name 走。
+- **文档**：README 中英新增 0.1.13 行为节（含 N2① 行为变化提示）；0.1.12 的 R1/R2/R3/R7/R11/R12 表述补「0.1.13 起…」前向说明；新增 `docs/TEST-RUN-2026-11-01-0.1.13.md`。
+- 测试（最终 gate，2026-11-01 21:01:19–21:03:16）：`npm test` **112/112**、`live-e2e` **89/89**、`pointer-selector` **11/11**（0.1.12 为 103/89/11）。
+
 ## 0.1.12 — 2026-11-01
 
 按 0.1.11 round-4 复核报告修 4 个 S2（R1–R4）与 R5–R11、冻结后审计修复 N1/N2/N5，并逐条修正 R12 文档漂移。
 
-- **R1 Page 工具共用前导加固**：全部 Page 工具（16 个 `pageTool`，其中 15 个走 `pagePrelude`；`ego_app_gesture` 不走）共用的 `pagePrelude` 先校验 `task.pages()` 是数组（否则 `the TaskSpace page list is unreadable`），再校验 `newPage()`/`page()` 返回带 `label` 的 Page（否则 `did not return a Page: … (no command ran against a Page)`）——坏 bridge 上不再继续跑命令。
-- **R2/N2 同名空间歧义拒绝**：按 name 解析命中多个空间 → `the name '…' matches N spaces (ids …); pass the space id instead so this action cannot hit the wrong one`；`close`/`finish` 等不再可能打到「另一个同名空间」；`open` 前也做同名检查（读列表失败不阻塞 open）。**Page 工具与 `ego_app_tabs{scope:'space'}` 现在也接受 `id`（number，优先于 name）**，歧义时可直接用 id 定位。
-- **R3 调用表达式与嵌套括号默认参数（语义澄清，非行为变化）**：`isFunctionSource` 本来就只把参数列表无嵌套括号的形式当函数源码——`(async () => 1)()`、`(0, () => 7)()` 与带嵌套括号默认参数的箭头都归 expression（`wait` 正确包裹、`ego_app_js` 走 expression），`() => 1`、`(a, b) => a`、`function(){…}`、`async () => 1` 仍是函数源码。本轮把语义写进文档并用测试锁死。
+- **R1 Page 工具共用前导加固**：全部 Page 工具（16 个 `pageTool`，其中 15 个走 `pagePrelude`；`ego_app_gesture` 不走）共用的 `pagePrelude` 先校验 `task.pages()` 是数组（否则 `the TaskSpace page list is unreadable`），再校验 `newPage()`/`page()` 返回带 `label` 的 Page（否则 `did not return a Page: … (no command ran against a Page)`；0.1.13 N7 起只要求 label 存在，不要求 string）——坏 bridge 上不再继续跑命令。
+- **R2/N2 同名空间歧义拒绝**：按 name 解析命中多个空间 → `the name '…' matches N spaces (ids …); pass the space id instead so this action cannot hit the wrong one`；`close`/`finish` 等不再可能打到「另一个同名空间」；`open` 前也做同名检查（读列表失败不阻塞 open）。**Page 工具与 `ego_app_tabs{scope:'space'}` 现在也接受 `id`（number，优先于 name）**，歧义时可直接用 id 定位（0.1.13 N2① 起 `ego_app_space` 也统一为 id 优先）。
+- **R3 调用表达式与嵌套括号默认参数（语义澄清，非行为变化）**：`isFunctionSource` 本来就只把参数列表无嵌套括号的形式当函数源码——`(async () => 1)()`、`(0, () => 7)()` 与带嵌套括号默认参数的箭头都归 expression（`wait` 正确包裹、`ego_app_js` 走 expression），`() => 1`、`(a, b) => a`、`function(){…}`、`async () => 1` 仍是函数源码。本轮把语义写进文档并用测试锁死。（0.1.13 N4 进一步改为括号匹配：参数带嵌套括号的箭头现在被识别为函数源码。）
 - **R4 dialog 双错误保留**：`acceptDialog`/`dismissDialog` 抛错不再抹掉点击错误——两条都报（`trigger click failed: …` / `answering the dialog failed: …`）；只有「点击失败且应答成功」保留旧措辞 `still answered (handled=…)`；应答本身失败会提示 dialog 可能仍开着（`retry ego_app_dialog without trigger, or reload the Page`）。
 - **R5 app-open 诊断性预读失败不再阻塞创建**：`ego_app_tabs{scope:'app',action:'open'}` 的 `listTabs()` 预读失败 → 继续 `createTab()`，结果 `verified:null`（预读成功才给 `true`/`false`）。
 - **R6 `1+1;` 真正修好**：`ego_app_js` auto 的 statementMode 判定改用 `normalizeSource(expr)`，`{expression:"1+1;"}` → expression → `value: 2`（`const x=1; return x;` 仍走 statements）；`test/generated-scripts.test.mjs` 的断言从 `ok===true` 改为 `value===2`。
-- **R7/N1 结构化成功也能看到脚本/CLI 自身输出**：结构化工具成功且 CLI 有输出时，结果带 `log`；**ego 不把页面 console 转发到 CLI**，所以 `log` 是脚本或 CLI 自身的输出（页面内 `console.log` 不在其中）；无输出时不出现该字段（结果形状不变）。若此次输出被 `maxOutputBytes` 截断，同一结果还会带 `truncated:true`（未截断不出现）。
+- **R7/N1 结构化成功也能看到脚本/CLI 自身输出**：结构化工具成功且 CLI 有输出时，结果带 `log`；**ego 不把页面 console 转发到 CLI**，所以 `log` 是脚本或 CLI 自身的输出（页面内 `console.log` 不在其中）；无输出时不出现该字段（结果形状不变）。若此次输出被 `maxOutputBytes` 截断，同一结果还会带 `truncated:true`（未截断不出现）。（0.1.13 N9 起结构化 `log` 上限 16000，超限附 `logTruncated`/`logLength`；`ego_app_run` 不受此限。）
 - **R8 `delete{}` 宿主侧拒绝**：没有 name/id/ids → `ok:false`（`… it never guesses which TaskSpace you mean.`）+ hint，**零 spawn**。
 - **R9/N5 delete 的 skipped 与 still-listed 分开报**：`skippedRunningSpaceIds` 单独文案并**带 hint**（`ego only deletes spaces whose agent task has ended; close or finish them first, then retry the delete`）；只有真的还在列表里才说 `were still listed after ~2400 ms`；两者同时出现时**两条都报**。
 - **R10 `Task space not selected` 专用 hint**：空间可能已消失——先 `ego_app_space{action:'list'}` 确认，否则先 open/use 再试。
-- **R11 轮询常数命名**：`SPACE_WATCH_INTERVAL_MS = 150` / `SPACE_WATCH_TIMEOUT_MS = 2400`，delete 的 leftover 轮询复用同一常量；文档统一改为「每 150 ms 轮询、2400 ms 截止（实测 17 次 / ~2.6 s）」。
-- **R12 文档漂移修正**：① `12×150 ms` 的旧写法（README/CHANGELOG 四处）改为「每 150 ms 轮询、2400 ms 截止（实测 17 次 / ~2.6 s）」；② `1+1;` 的声明由 R6 落实，测试断言为 `value===2`；③ render 的 20000 字符上限是**插件自己的常量**（`OUT.render` 的 limit），不是宿主预算；④ 任务结束丢输出的自然命中依赖应用状态，但兜底判定表已由扩展假 CLI 覆盖，不再算「未测的环境限制」；⑤ 0.1.9 close 竞态频率改为「曾观测 10/13–18/33，复测约 7%（1/14），频率随机器状态浮动；轮询对高频与低频都成立」；⑥ `delete{}` 现在由宿主侧拒绝（0 spawn）；⑦ app-open 预读失败 → `verified:null`；⑧ 结构化成功可带 `log`（脚本/CLI 自身输出，不是页面 console）；⑨ 同名空间歧义拒绝与 Page 工具前导守卫见 R1/R2。
+- **R11 轮询常数命名**：`SPACE_WATCH_INTERVAL_MS = 150` / `SPACE_WATCH_TIMEOUT_MS = 2400`，delete 的 leftover 轮询复用同一常量；文档统一改为「每 150 ms 轮询、2400 ms 截止（实测 17 次 / ~2.6 s）」。（0.1.13 N6 起 11 处错误文案也由该常量插值派生。）
+- **R12 文档漂移修正**：① `12×150 ms` 的旧写法（README/CHANGELOG 四处）改为「每 150 ms 轮询、2400 ms 截止（实测 17 次 / ~2.6 s）」（0.1.13 N6 起错误文案也由常量插值派生）；② `1+1;` 的声明由 R6 落实，测试断言为 `value===2`；③ render 的 20000 字符上限是**插件自己的常量**（`OUT.render` 的 limit），不是宿主预算；④ 任务结束丢输出的自然命中依赖应用状态，但兜底判定表已由扩展假 CLI 覆盖，不再算「未测的环境限制」；⑤ 0.1.9 close 竞态频率改为「曾观测 10/13–18/33，复测约 7%（1/14），频率随机器状态浮动；轮询对高频与低频都成立」；⑥ `delete{}` 现在由宿主侧拒绝（0 spawn）；⑦ app-open 预读失败 → `verified:null`；⑧ 结构化成功可带 `log`（脚本/CLI 自身输出，不是页面 console）；⑨ 同名空间歧义拒绝与 Page 工具前导守卫见 R1/R2。
 - 测试（最终 gate，2026-11-01 20:21:20–20:23:17）：`npm test` **103/103**、`live-e2e` **89/89**、`pointer-selector` **11/11**（0.1.11 为 91/89/11）。
 - 文档：README 中英新增 0.1.12 行为节；新增 `docs/TEST-RUN-2026-11-01-0.1.12.md`。
 
