@@ -54,3 +54,15 @@ test("detection only parses the source; it never runs the body", () => {
 	assert.equal(globalThis.__dshFunctionSourceExecuted, undefined);
 	delete globalThis.__dshFunctionSourceExecuted;
 });
+
+test("call expressions are not function sources (R3)", () => {
+	// A call whose callee is a function expression is an expression: evaluating it
+	// returns the call's value, not a function. 0.1.12 stops treating it as one.
+	for (const source of ["(async () => 1)()", "(0, () => 7)()", "(() => 1)()", "(function () { return 1; })()"]) {
+		assert.equal(isFunctionSource(source), false, source);
+	}
+	// The function sources themselves stay detected.
+	for (const source of ["() => 1", "(a, b) => a", "function () { return 1; }", "async () => 1"]) {
+		assert.equal(isFunctionSource(source), true, source);
+	}
+});

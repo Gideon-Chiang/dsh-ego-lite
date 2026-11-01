@@ -38,11 +38,11 @@ const scratchPath = (name) => {
 };
 
 /** Run one tool through a plugin instance that spawns the fake CLI. */
-const run = async (toolName, args, { env = {}, exec = {} } = {}) => {
+const run = async (toolName, args, { env = {}, exec = {}, config = {} } = {}) => {
 	const tools = new Map();
 	apply(
 		{ tools: { register: (tool) => tools.set(tool.name, tool) }, systemPrompt: { section: () => {} } },
-		{ executable: process.execPath, timeoutMs: 30000, maxOutputBytes: 1048576, announceToAgent: false }
+		{ executable: process.execPath, timeoutMs: 30000, maxOutputBytes: 1048576, announceToAgent: false, ...config }
 	);
 	const previous = {};
 	for (const [key, value] of Object.entries(env)) {
@@ -460,6 +460,12 @@ test("N-a: trailing semicolons are normalised and a broken source is rejected be
 
 	const exprSemicolon = await run("ego_app_js", { name: "fake-space", expression: "1+1;" });
 	assert.equal(exprSemicolon.ok, true, JSON.stringify(exprSemicolon));
+	// R6: a trailing semicolon is not a statements body — `1+1;` evaluates to 2.
+	assert.equal(exprSemicolon.value, 2, "1+1; must run as an expression and return its value");
+
+	const statements = await run("ego_app_js", { name: "fake-space", expression: "const x=1; return x;" });
+	assert.equal(statements.ok, true, JSON.stringify(statements));
+	assert.equal(statements.value, 1, "a real statement body still runs as statements");
 
 	const waitSemicolon = await run(
 		"ego_app_wait",
@@ -511,4 +517,186 @@ test("N-g: status leaves tabsSpaceId null when the post-selection tab read fails
 	assert.equal(out.data.tabsSpaceId, null, "a failed retry must not claim it verified a selected space");
 	assert.match(String(out.data.tabsError ?? ""), /injected app tab read failure after selection/);
 	assert.ok(Array.isArray(out.data.tabs));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fourth batch (contract R1–R10): Page prelude guards, same-name ambiguity,
+// dialog double errors, app-open verified:null.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── R1: the shared Page prelude fails readably instead of running blind ──
+test("R1: a Page tool fails readably when pages/newPage/page are not usable", async () => {
+	const pagesFailed = await run("ego_app_js", { name: "fake-space", expression: "1+1" }, { env: { EGO_FAKE_PAGES: "error" } });
+	assert.equal(pagesFailed.ok, false, JSON.stringify(pagesFailed));
+	assert.match(String(pagesFailed.error ?? ""), /TaskSpace page list is unreadable, so this Page cannot be resolved/);
+
+	const pageFailed = await run("ego_app_js", { name: "fake-space", expression: "1+1" }, { env: { EGO_FAKE_PAGE: "no-label" } });
+	assert.equal(pageFailed.ok, false, JSON.stringify(pageFailed));
+	assert.match(String(pageFailed.error ?? ""), /page\(\) did not return a Page:.*no command ran against a Page/);
+
+	const newPageFailed = await run(
+		"ego_app_navigate",
+		{ name: "fake-space", url: "about:blank", page: "p9" },
+		{ env: { EGO_FAKE_NEWPAGE: "no-label" } }
+	);
+	assert.equal(newPageFailed.ok, false, JSON.stringify(newPageFailed));
+	assert.match(String(newPageFailed.error ?? ""), /newPage\(\) did not return a Page:.*no command ran against a Page/);
+});
+
+// ── R2: same-name spaces are ambiguous; by-id stays usable; open refuses ──
+test("R2: same-name spaces are refused, by-id still works, open refuses duplicates", async () => {
+	const closeByName = await run("ego_app_space", { action: "close", name: "fake-space" }, { env: { EGO_FAKE_DUPLICATE: "1" } });
+	assert.equal(closeByName.ok, false, JSON.stringify(closeByName));
+	assert.match(String(closeByName.error ?? ""), /matches 2 spaces/);
+	assert.match(String(closeByName.error ?? ""), /pass the space id instead/);
+
+	const closeById = await run("ego_app_space", { action: "close", id: 9001 }, { env: { EGO_FAKE_DUPLICATE: "1" } });
+	assert.equal(closeById.ok, true, JSON.stringify(closeById));
+	assert.equal(closeById.spaceId, 9001);
+
+	const openByName = await run("ego_app_space", { action: "open", name: "fake-space" }, { env: { EGO_FAKE_DUPLICATE: "1" } });
+	assert.equal(openByName.ok, false, JSON.stringify(openByName));
+	assert.match(String(openByName.error ?? ""), /matches 2 spaces/);
+	assert.match(String(openByName.error ?? ""), /open the intended one by id instead/);
+});
+
+// ── R4: a throwing acceptDialog must not hide the trigger-click error ──
+test("R4: both the trigger-click and the dialog-answer failures are reported", async () => {
+	const out = await run(
+		"ego_app_dialog",
+		{ action: "accept", name: "fake-space", trigger: "#editable" },
+		{ env: { EGO_FAKE_BREAK: "click", EGO_FAKE_ACCEPT: "error" } }
+	);
+	assert.equal(out.ok, false, JSON.stringify(out));
+	assert.match(String(out.error ?? ""), /trigger click failed: injected click failure/);
+	assert.match(String(out.error ?? ""), /answering the dialog failed: injected acceptDialog failure/);
+	assert.match(
+		String(out.error ?? ""),
+		/the dialog may still be open: retry ego_app_dialog without trigger, or reload the Page/
+	);
+});
+
+// ── R5: a failed app-open pre-read yields verified:null, not false ──
+test("R5: app tab open reports verified:null when the pre-read failed", async () => {
+	const out = await run(
+		"ego_app_tabs",
+		{ scope: "app", action: "open", name: "fake-space", url: "about:blank" },
+		{ env: { EGO_FAKE_TABS: "preread-fail" } }
+	);
+	assert.equal(out.ok, true, JSON.stringify(out));
+	assert.equal(out.verified, null, "an unverifiable pre-read must not be reported as false");
+});
+
+// ── R7: structured successes surface the CLI log ──
+test("R7: a structured success carries the CLI log when there is output", async () => {
+	const noise = { EGO_FAKE_NOISE: "1" };
+
+	const js = await run("ego_app_js", { name: "fake-space", expression: "1+1" }, { env: noise });
+	assert.equal(js.ok, true, JSON.stringify(js));
+	assert.equal(js.log, "fake-noise-line");
+
+	const tabs = await run("ego_app_tabs", { scope: "app", name: "fake-space" }, { env: noise });
+	assert.equal(tabs.ok, true, JSON.stringify(tabs));
+	assert.equal(tabs.log, "fake-noise-line");
+
+	const status = await run("ego_app_status", {}, { env: { ...noise, EGO_FAKE_TABS: "unselected" } });
+	assert.equal(status.ok, true, JSON.stringify(status));
+	assert.equal(status.log, "fake-noise-line");
+
+	const quiet = await run("ego_app_js", { name: "fake-space", expression: "1+1" });
+	assert.equal(quiet.ok, true, JSON.stringify(quiet));
+	assert.equal("log" in quiet, false, "no CLI output means the log field stays absent");
+});
+
+// ── R8: an empty delete is refused on the host side, before any spawn ──
+test("R8: delete{} is refused host-side without spawning", async () => {
+	const dump = scratchPath("r8.dump");
+	const out = await run("ego_app_space", { action: "delete" }, { env: { EGO_FAKE_DUMP: dump } });
+	assert.equal(out.ok, false, JSON.stringify(out));
+	assert.match(String(out.error ?? ""), /never guesses which TaskSpace you mean/);
+	assert.equal(typeof out.hint, "string");
+	assert.equal(existsSync(dump), false, "no CLI process may be spawned");
+});
+
+// ── R9: a skipped running space gets its own message ──
+test("R9: a skipped running space is reported as skipped, not as 'still listed'", async () => {
+	const out = await run(
+		"ego_app_space",
+		{ action: "delete", ids: [9001] },
+		{ env: { EGO_FAKE_OWNERSHIP: "user", EGO_FAKE_DELETE: "skipped" } }
+	);
+	assert.equal(out.ok, false, JSON.stringify(out));
+	assert.match(String(out.error ?? ""), /deleteSpaces\(\) skipped running space\(s\) 9001/);
+	assert.match(String(out.error ?? ""), /close or finish them first, then retry the delete/);
+	assert.doesNotMatch(String(out.error ?? ""), /were still listed after/);
+	// N5: a skipped-only failure must also carry the space-specific hint.
+	assert.equal(typeof out.hint, "string");
+	assert.match(String(out.hint ?? ""), /ego only deletes spaces whose agent task has ended/);
+});
+
+// ── R10: 'Task space not selected' gets a dedicated hint ──
+test("R10: 'Task space not selected' gets its own hint instead of the generic list hint", async () => {
+	const out = await run("ego_app_space", { action: "pages", name: "fake-space" }, { env: { EGO_FAKE_LIST: "notselected" } });
+	assert.equal(out.ok, false, JSON.stringify(out));
+	const hint = String(out.hint ?? "");
+	assert.match(hint, /no selected TaskSpace for this call/);
+	assert.match(hint, /open\/use the space first/);
+	assert.doesNotMatch(hint, /instead of its TaskSpace list/, "the generic unreadable-space hint must not win");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fifth batch (contract N1 / N2 / N5)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── N2: Page tools accept an id, which must beat ambiguous duplicate names ──
+test("N2: Page tools accept an id and resolve that space despite duplicate names", async () => {
+	const snapshot = await run("ego_app_snapshot", { id: 9001, scope: "viewport" }, { env: { EGO_FAKE_DUPLICATE: "1" } });
+	assert.equal(snapshot.ok, true, JSON.stringify(snapshot));
+	assert.equal(snapshot.spaceId, 9001);
+
+	const tabs = await run("ego_app_tabs", { scope: "space", id: 9001 }, { env: { EGO_FAKE_DUPLICATE: "1" } });
+	assert.equal(tabs.ok, true, JSON.stringify(tabs));
+	assert.equal(tabs.spaceId, 9001);
+
+	// Without an id the ambiguity is still refused, not silently resolved.
+	const snapshotByName = await run("ego_app_snapshot", { name: "fake-space", scope: "viewport" }, { env: { EGO_FAKE_DUPLICATE: "1" } });
+	assert.equal(snapshotByName.ok, false, JSON.stringify(snapshotByName));
+	assert.match(String(snapshotByName.error ?? ""), /matches 2 spaces/);
+
+	const tabsByName = await run("ego_app_tabs", { scope: "space", name: "fake-space" }, { env: { EGO_FAKE_DUPLICATE: "1" } });
+	assert.equal(tabsByName.ok, false, JSON.stringify(tabsByName));
+	assert.match(String(tabsByName.error ?? ""), /matches 2 spaces/);
+});
+
+// ── N1: a structured success reports truncation instead of hiding it ──
+test("N1: a truncated structured success carries log and truncated:true", async () => {
+	const truncated = await run(
+		"ego_app_js",
+		{ name: "fake-space", expression: "1+1" },
+		{ env: { EGO_FAKE_NOISE: "big" }, config: { maxOutputBytes: 256 } }
+	);
+	assert.equal(truncated.ok, true, JSON.stringify(truncated));
+	assert.equal(truncated.truncated, true);
+	assert.equal(typeof truncated.log, "string");
+	assert.ok(truncated.log.length <= 256, `the kept log must respect maxOutputBytes (got ${truncated.log.length})`);
+
+	const intact = await run("ego_app_js", { name: "fake-space", expression: "1+1" }, { config: { maxOutputBytes: 256 } });
+	assert.equal(intact.ok, true, JSON.stringify(intact));
+	assert.equal("truncated" in intact, false, "no truncation means no truncated field");
+});
+
+// ── N5: leftover AND skipped are reported together ──
+test("N5: leftover and skipped are both reported when the delete leaves work", async () => {
+	const out = await run(
+		"ego_app_space",
+		{ action: "delete", ids: [9001] },
+		{ env: { EGO_FAKE_OWNERSHIP: "user", EGO_FAKE_DELETE: "skipped-leftover" } }
+	);
+	assert.equal(out.ok, false, JSON.stringify(out));
+	assert.match(String(out.error ?? ""), /were still listed after/);
+	assert.match(String(out.error ?? ""), /ego skipped running space\(s\) 9001/);
+	assert.match(String(out.error ?? ""), /close or finish them first, then retry the delete/);
+	// Both diagnoses in one error still picks the skipped-space hint.
+	assert.equal(typeof out.hint, "string");
+	assert.match(String(out.hint ?? ""), /ego only deletes spaces whose agent task has ended/);
 });

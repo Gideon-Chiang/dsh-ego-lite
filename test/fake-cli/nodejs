@@ -12,9 +12,11 @@
 // extension-less file here is loaded as ESM.
 //
 // Env switches (all optional; default = healthy app):
-//   EGO_FAKE_LIST=error|circular     ego.listTaskSpaces() -> {error} | circular object
-//   EGO_FAKE_TABS=error|unselected|unselected-fail  ego.listTabs(): always error | error until a
-//                                    space is selected | error again after the selection
+//   EGO_FAKE_LIST=error|circular|notselected  ego.listTaskSpaces() -> {error} | circular object |
+//                                    {error: "Task space not selected"}
+//   EGO_FAKE_TABS=error|unselected|unselected-fail|preread-fail  ego.listTabs(): always error |
+//                                    error until a space is selected | error again after the
+//                                    selection | first read of the run fails, later reads work
 //   EGO_FAKE_SPACE_TABS=error        task.tabs() -> {error} (not an array)
 //   EGO_FAKE_PAGES=error             task.pages() -> {error} (not an array)
 //   EGO_FAKE_PROFILES=error          ego.listProfiles() -> {error}
@@ -25,6 +27,13 @@
 //   EGO_FAKE_ADOPT=no-page|not-managed  task.adopt() -> {} | Page that stays unmanaged
 //   EGO_FAKE_RECEIPT=dialog|long|popup  page.click() -> dialog / 3000-char dialog / popup receipt
 //   EGO_FAKE_DIALOG=none             page.acceptDialog()/dismissDialog() -> false
+//   EGO_FAKE_ACCEPT=error            page.acceptDialog()/dismissDialog() throws
+//   EGO_FAKE_PAGE=no-label           task.page() -> {} (no Page)
+//   EGO_FAKE_DUPLICATE=1             two spaces share SPACE_NAME (ambiguity)
+//   EGO_FAKE_OWNERSHIP=user          list rows claim user ownership
+//   EGO_FAKE_DELETE=skipped          deleteSpaces() reports the id as skipped-running
+//   EGO_FAKE_NOISE=1|big             stderr noise line (short | 1000 chars) before the result
+//   EGO_FAKE_DELETE=skipped|skipped-leftover  deleteSpaces() reports skipped ids (listed / still listed)
 //   EGO_FAKE_GESTURE=none|long       ego.*Gesture* -> undefined | 900-char string
 //   EGO_FAKE_BREAK=label             page.close() drops page.label
 //   EGO_FAKE_BREAK=spaceid           task.spaceId getter throws after a terminal action
@@ -52,6 +61,8 @@ if (env.EGO_FAKE_DUMP) {
 		fs.appendFileSync(env.EGO_FAKE_DUMP, JSON.stringify({ script: source }) + "\n");
 	} catch {}
 }
+if (env.EGO_FAKE_NOISE === "1") console.error("fake-noise-line");
+if (env.EGO_FAKE_NOISE === "big") console.error("x".repeat(1000));
 const record = (call, args) => {
 	if (!env.EGO_FAKE_CALLS) return;
 	try {
@@ -61,17 +72,21 @@ const record = (call, args) => {
 
 const SPACE_ID = 9001;
 const SPACE_NAME = "fake-space";
+let listTabsCalls = 0;
 const state = { closed: false, broken: false, ownership: "agent", selected: false, extraTab: false };
 const row = (ownership) => ({ id: SPACE_ID, name: SPACE_NAME, ownership });
 const listSpaces = () => {
 	if (env.EGO_FAKE_LIST === "error") return { error: "injected read failure" };
+	if (env.EGO_FAKE_LIST === "notselected") return { error: "Task space not selected", error_code: "EGO_TASK_SPACE_NOT_SELECTED" };
 	if (env.EGO_FAKE_LIST === "circular") {
 		const bad = { error: "injected unreadable object" };
 		bad.self = bad; // JSON.stringify() throws — describeRead() must survive it
 		return bad;
 	}
 	if (state.closed) return { taskSpaces: [] };
-	return { taskSpaces: [row(state.ownership)] };
+	const ownership = env.EGO_FAKE_OWNERSHIP ?? state.ownership;
+	if (env.EGO_FAKE_DUPLICATE === "1") return { taskSpaces: [row(ownership), { ...row(ownership), id: SPACE_ID + 1 }] };
+	return { taskSpaces: [row(ownership)] };
 };
 
 const clickReceipt = () => {
@@ -117,9 +132,13 @@ const makePage = (initialLabel = "p1") => {
 		waitForFileChooser: async () => ({}),
 		acceptDialog: async (text) => {
 			record("acceptDialog", text === undefined ? null : text);
+			if (env.EGO_FAKE_ACCEPT === "error") throw new Error("injected acceptDialog failure");
 			return env.EGO_FAKE_DIALOG !== "none";
 		},
-		dismissDialog: async () => env.EGO_FAKE_DIALOG !== "none",
+		dismissDialog: async () => {
+			if (env.EGO_FAKE_ACCEPT === "error") throw new Error("injected dismissDialog failure");
+			return env.EGO_FAKE_DIALOG !== "none";
+		},
 		setInputFiles: async () => ({}),
 		events: async () => ({}),
 		fetch: async () => ({ status: 200, url: "about:blank", ok: true }),
@@ -144,7 +163,7 @@ const task = {
 	name: SPACE_NAME,
 	get ownership() { return state.ownership; },
 	pages: async () => (env.EGO_FAKE_PAGES === "error" ? { error: "injected page read failure" } : [{ label: "p1" }]),
-	page: () => page,
+	page: () => (env.EGO_FAKE_PAGE === "no-label" ? {} : page),
 	newPage: async () => {
 		if (env.EGO_FAKE_NEWPAGE === "no-label") return {};
 		if (env.EGO_FAKE_NEWPAGE === "budget") throw new Error("Page budget reached: ego allows at most 8 Pages per TaskSpace");
@@ -190,6 +209,7 @@ globalThis.ego = {
 	listTaskSpaces: async () => listSpaces(),
 	listTabs: async () => {
 		if (env.EGO_FAKE_TABS === "error") return { error: "injected app tab read failure" };
+		if (env.EGO_FAKE_TABS === "preread-fail" && listTabsCalls++ === 0) return { error: "injected app tab read failure (pre-read)" };
 		// Every CLI run starts with no TaskSpace selected; these modes reproduce that
 		// so a caller can prove it selects a space and retries (or reports the retry
 		// failure honestly).
@@ -226,7 +246,17 @@ globalThis.ego = {
 	},
 	createTaskSpace: async () => (env.EGO_FAKE_CREATE === "no-id" ? {} : { id: SPACE_ID, spaceId: SPACE_ID }),
 	useTaskSpace: async (id) => { state.selected = true; record("useTaskSpace", id); },
-	deleteSpaces: async (options = {}) => ({ deletedSpaceIds: options.ids ?? [], skippedRunningSpaceIds: [] }),
+	deleteSpaces: async (options = {}) => {
+		if (env.EGO_FAKE_DELETE === "skipped") {
+			state.closed = true; // the id is not listed anymore, yet ego skipped it
+			return { deletedSpaceIds: [], skippedRunningSpaceIds: options.ids ?? [SPACE_ID] };
+		}
+		if (env.EGO_FAKE_DELETE === "skipped-leftover") {
+			// The id stays listed and ego also reports it as skipped: both diagnoses.
+			return { deletedSpaceIds: [], skippedRunningSpaceIds: options.ids ?? [SPACE_ID] };
+		}
+		return { deletedSpaceIds: options.ids ?? [], skippedRunningSpaceIds: [] };
+	},
 	setAgentTaskState: async () => {},
 	sendCDPMessage: async () => ({}),
 	animationHighlightMouseToPosition: async () => gestureValue(),

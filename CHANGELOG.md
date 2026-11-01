@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.12 — 2026-11-01
+
+按 0.1.11 round-4 复核报告修 4 个 S2（R1–R4）与 R5–R11、冻结后审计修复 N1/N2/N5，并逐条修正 R12 文档漂移。
+
+- **R1 Page 工具共用前导加固**：全部 Page 工具（16 个 `pageTool`，其中 15 个走 `pagePrelude`；`ego_app_gesture` 不走）共用的 `pagePrelude` 先校验 `task.pages()` 是数组（否则 `the TaskSpace page list is unreadable`），再校验 `newPage()`/`page()` 返回带 `label` 的 Page（否则 `did not return a Page: … (no command ran against a Page)`）——坏 bridge 上不再继续跑命令。
+- **R2/N2 同名空间歧义拒绝**：按 name 解析命中多个空间 → `the name '…' matches N spaces (ids …); pass the space id instead so this action cannot hit the wrong one`；`close`/`finish` 等不再可能打到「另一个同名空间」；`open` 前也做同名检查（读列表失败不阻塞 open）。**Page 工具与 `ego_app_tabs{scope:'space'}` 现在也接受 `id`（number，优先于 name）**，歧义时可直接用 id 定位。
+- **R3 调用表达式与嵌套括号默认参数（语义澄清，非行为变化）**：`isFunctionSource` 本来就只把参数列表无嵌套括号的形式当函数源码——`(async () => 1)()`、`(0, () => 7)()` 与带嵌套括号默认参数的箭头都归 expression（`wait` 正确包裹、`ego_app_js` 走 expression），`() => 1`、`(a, b) => a`、`function(){…}`、`async () => 1` 仍是函数源码。本轮把语义写进文档并用测试锁死。
+- **R4 dialog 双错误保留**：`acceptDialog`/`dismissDialog` 抛错不再抹掉点击错误——两条都报（`trigger click failed: …` / `answering the dialog failed: …`）；只有「点击失败且应答成功」保留旧措辞 `still answered (handled=…)`；应答本身失败会提示 dialog 可能仍开着（`retry ego_app_dialog without trigger, or reload the Page`）。
+- **R5 app-open 诊断性预读失败不再阻塞创建**：`ego_app_tabs{scope:'app',action:'open'}` 的 `listTabs()` 预读失败 → 继续 `createTab()`，结果 `verified:null`（预读成功才给 `true`/`false`）。
+- **R6 `1+1;` 真正修好**：`ego_app_js` auto 的 statementMode 判定改用 `normalizeSource(expr)`，`{expression:"1+1;"}` → expression → `value: 2`（`const x=1; return x;` 仍走 statements）；`test/generated-scripts.test.mjs` 的断言从 `ok===true` 改为 `value===2`。
+- **R7/N1 结构化成功也能看到脚本/CLI 自身输出**：结构化工具成功且 CLI 有输出时，结果带 `log`；**ego 不把页面 console 转发到 CLI**，所以 `log` 是脚本或 CLI 自身的输出（页面内 `console.log` 不在其中）；无输出时不出现该字段（结果形状不变）。若此次输出被 `maxOutputBytes` 截断，同一结果还会带 `truncated:true`（未截断不出现）。
+- **R8 `delete{}` 宿主侧拒绝**：没有 name/id/ids → `ok:false`（`… it never guesses which TaskSpace you mean.`）+ hint，**零 spawn**。
+- **R9/N5 delete 的 skipped 与 still-listed 分开报**：`skippedRunningSpaceIds` 单独文案并**带 hint**（`ego only deletes spaces whose agent task has ended; close or finish them first, then retry the delete`）；只有真的还在列表里才说 `were still listed after ~2400 ms`；两者同时出现时**两条都报**。
+- **R10 `Task space not selected` 专用 hint**：空间可能已消失——先 `ego_app_space{action:'list'}` 确认，否则先 open/use 再试。
+- **R11 轮询常数命名**：`SPACE_WATCH_INTERVAL_MS = 150` / `SPACE_WATCH_TIMEOUT_MS = 2400`，delete 的 leftover 轮询复用同一常量；文档统一改为「每 150 ms 轮询、2400 ms 截止（实测 17 次 / ~2.6 s）」。
+- **R12 文档漂移修正**：① `12×150 ms` 的旧写法（README/CHANGELOG 四处）改为「每 150 ms 轮询、2400 ms 截止（实测 17 次 / ~2.6 s）」；② `1+1;` 的声明由 R6 落实，测试断言为 `value===2`；③ render 的 20000 字符上限是**插件自己的常量**（`OUT.render` 的 limit），不是宿主预算；④ 任务结束丢输出的自然命中依赖应用状态，但兜底判定表已由扩展假 CLI 覆盖，不再算「未测的环境限制」；⑤ 0.1.9 close 竞态频率改为「曾观测 10/13–18/33，复测约 7%（1/14），频率随机器状态浮动；轮询对高频与低频都成立」；⑥ `delete{}` 现在由宿主侧拒绝（0 spawn）；⑦ app-open 预读失败 → `verified:null`；⑧ 结构化成功可带 `log`（脚本/CLI 自身输出，不是页面 console）；⑨ 同名空间歧义拒绝与 Page 工具前导守卫见 R1/R2。
+- 测试（最终 gate，2026-11-01 20:21:20–20:23:17）：`npm test` **103/103**、`live-e2e` **89/89**、`pointer-selector` **11/11**（0.1.11 为 91/89/11）。
+- 文档：README 中英新增 0.1.12 行为节；新增 `docs/TEST-RUN-2026-11-01-0.1.12.md`。
+
 ## 0.1.11 — 2026-11-01
 
 第三轮收尾（0.1.10 → 0.1.11）：清零剩余 S3，把 0.1.10 的 fail-closed 主题补齐到 `ego_app_tabs`，并让生成脚本第一次可以脱离真应用、用假 CLI 单测。
@@ -25,7 +44,7 @@
 - **S 新 hint**：tab 读失败专用 hint（`would not list its tabs…`），adopt/release 与 Page budget（8 页）各一条。
 - **T 前置解析**：`wait{for:'function'}` 与 `ego_app_js` 在 spawn 前用 `new Function` 只解析目标源码，语法错误 → 可读失败（`needs a valid function source or expression` / `… is not valid JavaScript`），不 spawn、零副作用。
 - **U `ego_app_tabs` 空间解析**：统一用 `spaceArg`（空白 name 视同未给）。
-- **N-a 尾部分号归一**：`ego_app_js`/`ego_app_wait{for:'function'}` 判定与包装前先去掉尾部分号——`() => 1;`、`1+1;` 现在可用；statements body 保留原样。
+- **N-a 尾部分号归一**：`ego_app_js`/`ego_app_wait{for:'function'}` 判定与包装前先去掉尾部分号——`() => 1;` 可用；statements body 保留原样。（`1+1;` 的 auto 判定到 0.1.12 的 R6 才真正走 expression 并返回 `value:2`，见 0.1.12 条目；当时生成脚本测试只断言 `ok===true`，已同步收紧。）
 - **N-c app `open` 证据**：`ego_app_tabs{scope:'app',action:'open'}` 结果新增 `verified:boolean`（tab 列表是否真的变长）；只是证据，不因 `false` 报失败（避免列表刷新竞态）。
 - **N-d/N-e adopt/release 守卫**：`adopt`/`release` 回读 `task.pages()` 非数组 → 可读失败（`the TaskSpace page list is unreadable`）。
 - **N-f dialog 点击失败仍应答**：trigger 点击抛错时先应答 dialog，再抛点击错误（错误带 `any dialog it raised was still answered (handled=…)`），不会留下未应答 dialog。
@@ -47,7 +66,7 @@
 - **`pageCreated` 可见**：**真正的 Page 工具**（`navigate`/`snapshot`/`screenshot`/`click`/`fill`/`key`/`pointer`/`select`/`wait`/`js`/`cdp`/`dialog`/`upload`/`download`/`page`）结果带 `pageCreated`，静默 `newPage()` 不再是隐形的；`ego_app_space{action:'open'}` 修回与 0.1.9 一致（**不返回** `pageCreated`，也不再自动建 Page——新空间 `pages` 可能为空，首次 Page 工具调用才 `newPage()`），`ego_app_gesture` 同样不返回。
 - **abort 真取消**：调用方取消（AbortSignal）会 kill 子进程并立即返回 `aborted by the caller`，不再等到插件级 180 s 上限。
 - **哨兵 nonce**：插件生成的脚本把结构化结果哨兵换成 per-run 随机后缀（`@@DSH_RESULT@@<nonce>`），页面文本伪造整行哨兵不再能顶替结构化结果。nonce 只替换插件自己生成的那一行打印表达式，**用户脚本里出现同名字面量（含 `@@DSH_NONCE_SLOT@@`）不会被改写**；`ego_app_run` 保持 plain `@@DSH_RESULT@@` 契约。带 token 的结构化调用若拿不到本 run 的哨兵行，会报专门的「没有携带本次运行 token 的结果行」，不再误称「脚本没跑」。
-- **render 截断有标记**：结果超过 20000 字符时追加 `…[renderedTruncated omittedChars=N limitChars=20000]`，不再静默截断。
+- **render 截断有标记**：结果超过 20000 字符时追加 `…[renderedTruncated omittedChars=N limitChars=20000]`，不再静默截断。 **20000 是插件自己的常量**（`OUT.render` 的 limit），不是宿主预算——这是我们的选择。
 - **新 hint**：`no space with id`、`only removes user-owned`、`matches N spaces`、`could not be read|could not be verified` 等失败现在都带下一步建议；hint 仍优先给具体观测（具体状态覆盖泛化的安装/onboarding 提示）。
 - **其它**：`lossless()` 改为递归过滤（嵌套对象/数组里的 `undefined` 不再漏给宿主）；Page 工具的结果统一过 `lossless`。
 - **文档/测试**：README 中英新增 0.1.10 行为变化节并更新第 16 条；新增 `docs/TEST-RUN-2026-11-01-0.1.10.md`。测试：`npm test` **48/48**（`cli-outcome` 21、`output-collector` 6、`locator-detect` 5、`ended-task-outcome` 16）；`live-e2e` **89/89**、`pointer-selector` **11/11**（`EGO_E2E_REQUIRE=1`，2026-11-01 实跑；0.1.9 为 43/72/11）。
@@ -56,7 +75,7 @@
 
 按 0.1.8 验证报告修「`ok:true` 已经可信、`ok:false` 还不可信」的一批问题：本轮重点是让**失败结论也有实测依据**，并收掉 0.1.8 修复自身引入的回归。
 
-- **`close` 改为轮询回读（修 0.1.8 的新回归）**：0.1.8 在 `closeTaskSpace()` 之后只读一次空间列表，而 ego 要 24–26 ms 才把条目移出列表，于是**已经关掉的空间被报成失败**（两个独立执行者实测 10/13、18/33 次误报，错误文案还把 agent 引向一次毫无必要的 `handoff`/`claim`）。现在照 `delete` 的做法轮询（12×150 ms，约 2.4 s）直到 id 消失：只有 ego **明确拒绝**（`closeTaskSpace()` 回执带 `error`，例如空间已委派给用户）、轮询后**仍在列表**、或空间列表**读不出来**（见下 `unreadable`）才 `ok:false`，错误文案改为「等 ~2400 ms 后仍列出（observed ownership=…）」+ 下一步 `hint`，不再断言「这是委派给用户的空间」。
+- **`close` 改为轮询回读（修 0.1.8 的新回归）**：0.1.8 在 `closeTaskSpace()` 之后只读一次空间列表，而 ego 要 24–26 ms 才把条目移出列表，于是**已经关掉的空间被报成失败**（曾观测到 10/13–18/33 次误报，复测约 7%（1/14），频率随机器状态浮动；错误文案还把 agent 引向一次毫无必要的 `handoff`/`claim`）。现在照 `delete` 的做法轮询（每 150 ms 轮询、2400 ms 截止；实测 17 次 / ~2.6 s）直到 id 消失：只有 ego **明确拒绝**（`closeTaskSpace()` 回执带 `error`，例如空间已委派给用户）、轮询后**仍在列表**、或空间列表**读不出来**（见下 `unreadable`）才 `ok:false`，错误文案改为「等 ~2400 ms 后仍列出（observed ownership=…）」+ 下一步 `hint`，不再断言「这是委派给用户的空间」。
 - **严格空间解析：除 `open` 外绝不创建空间**：官方 `taskSpace(name)` 的语义是 **reuse *or* create**，所以「close 失败 → 重试 close」会静默新建一个同名空间、再把它关掉并返回 `ok:true`：看起来修好了，实际什么都没修还多出一个空间。现在除 `open` 外的空间动作（`close`/`finish`/`complete`/`mark_error`/`handoff`/`wait_control`/`delete`/`pages`/`tabs`/…）一律先 `listTaskSpaces()` 解析**已存在**的空间、再按 id 恢复；**空间动作（含 `open`；`list`/`create` 除外）必须显式给 `name` 或 `id`**——空白 name（如 `"   "`）等同缺省——省略时宿主侧直接报 `name (string) or id (number) is required for this action`（附 hint、零副作用，避免误关最新空间）；只有 page 工具（`navigate`/`snapshot`/`click`/`fill`/…）可省略 name，取最新的 agent 空间（没有则取最新的 `agentDelegatedToUser` 空间）；找不到时统一报 `… is currently open. This action only operates on an existing space; it never creates one.`（0.1.8 那句「Never creates a space」的注释从本轮起才与事实一致）。
 - **六个动作统一回读语义（行为变化）**：`finish`/`complete`/`mark_error`/`close`/`handoff`/`wait_control` 共用同一套「轮询后回读」；`ownership` 是实测值；「空间已消失」统一记作 `"closed"`——对 `close`/`finish`/`complete`/`mark_error` 算成功（终结类动作不再靠 `if (… && …)` 在空间已被别处关闭时「真空通过」），对 `handoff`/`wait_control`/`takeover` 算失败（没有空间就不可能达成目标状态）。
 - **读数失败不等于空间消失**：`listTaskSpaces()` 返回错误对象或缺少 `taskSpaces` 时，`close`/`finish`/`complete`/`mark_error` 不再把读失败当「空间已关闭」报 `ok:true`，而是**报失败**，`error` 里带 `observed ownership: unreadable`（hint 指向先 `list`/`ego_app_status` 再重试）；任务结束兜底的探针若读失败会**放弃兜底、保留原始错误**。`unreadable` 表示状态没能确认——既不是成功，也不是「已完成转换」。
