@@ -81,6 +81,21 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 
 任意官方 API 都能通过 `ego_app_run` 使用（`const task = await taskSpace(...)`、`await task.page('p1')`、`page.*`、`ego.*`、`fetch`）。注意 `taskSpace()` 返回 Promise，**必须 `await`**，否则会得到 `task.page is not a function`。
 
+## 行为变化（0.1.15，升级前必读）
+
+0.1.15 把"手写词法扫描器"整体删掉，换成**用引擎自己的 parser 当 oracle + 一个 value probe**；上一版那些"注释/正则/生成器/嵌套默认参数"的分类边缘从根上消失。
+
+1. **`ego_app_js` / `wait{for:'function'}` 不再猜"这是函数源码还是表达式"**：`parsesAsExpression()` 只编译、不执行，而且同一源码必须**同时**通过 `(src)` 与 `[src]` 两种包装（双包装 oracle：一种括号的语句逃逸会让另一种失衡）；`valueProbe()` 求值后**仅当结果确实是函数才调用它**（`await` 之后判断）。所以 `wait{for:'function', expression:"(x = 1) => x > 5"}` 会真的等到超时，而不是把箭头本身当 truthy 立即通过。
+2. **`js` 的 `auto` 语义**：源码是单个合法表达式 → 求值；结果若是函数 → **调用**（`() => 1+1` 得 2，`() => ({a:1})` 得对象）。**只想取值、不想调用**时用显式 `mode:"expression"`：它绝不调用源码，结果是函数时返回 `{ value: null, valueType: "function", note: … }`（以前会静默消失）。
+3. **函数值不再静默丢（含 async/Promise）**：`mode:"expression"` / `mode:"function"`（函数返回值） / `mode:"statements"`（体内 `return` 出函数）与 auto 都在 **`await` 之后**判断，`async () => () => 1`、`() => Promise.resolve(() => 1)`、`Promise.resolve(() => 1)`、`(async () => () => 1)()` 同样标记 `valueType:"function"`。副作用：`mode:"statements"` 体现在**支持顶层 `await`**（以前是语法错误），所有模式的 Promise 都会被 await/flatten。
+4. **尾分号是值的一部分**：`{expression:"1+1;"}` → 2、`{expression:"() => 1;"}` → 1、`fn:"(x)=>x+1;"` + `arg` 正常（只做 trim，不是词法分析）。
+5. **空源码被拒绝（守卫是线性扫描）**：`ego_app_js{}`、`{expression:""}`、以及**只含空白/分号/注释**的源码（`;`、`;;`、`; ;`、`; // c`、`/*c*/;`）→ `expression is required`；`wait{expression:";"}` 同样报 `expression is required for for="function"`（以前会静默求值出 `undefined`）。
+6. **包装逃逸在 spawn 前被拒绝**：同一源码必须同时通过 `(src)` 与 `[src]` 两种编译（双包装 oracle），所以 `js{expression:"1); evil(); (2"}` 这类"关闭括号后写语句"的源码得到可读错误且**零 spawn**——"Nothing ran" 的承诺成立。
+7. **已知限制（宣布不修，不是待办 BUG）**：
+   - (A) 刻意构造同时满足两种包装的源码，理论上仍可能绕过 oracle；源码由调用方/模型提供，能力等价于 `ego_app_run`，要彻底消除需引入 JS parser 依赖（本项目不引入）。
+   - (B) `js` 的 `auto` 会**调用**函数值：生成器函数被调用返回 truthy 迭代器（wait 会立即满足）、`class A {}` 被调用会抛 `Class constructor cannot be invoked without 'new'`。要"只取值不调用"用 `mode:"expression"`。`wait{for:'function'}` 的谓词同样**每次轮询都会求值并（若是函数）调用一次**，有副作用的函数不要当谓词；谓词抛错会中止等待并直接报错。
+   - (C) 其余既有 S3：结构化 `log` 上限 16000（`logLength` 是 UTF-16 字符数）、非字符串 label 原样进结果、`id:0` 是真实空间、上游/环境类限制（adopt 成功路径需用户页、真 app 同名空间不可构造、status 面板高亮不可观测、每空间 8 页预算、真浏览器套件必须串行）。
+
 ## 行为变化（0.1.14，升级前必读）
 
 0.1.14 收掉 0.1.13 残留的最后两条 N4 词法边缘（N4-a/N4-b），其余行为不变。
@@ -197,14 +212,15 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 
 ## 测试
 
-0.1.14 的实跑状态：`npm test` **126/126**、`live-e2e` **89/89**、`pointer-selector` **11/11**（见 [run log](docs/TEST-RUN-2026-11-01-0.1.14.md)）。
+0.1.15 的实跑状态：`npm test` **121/121**、`live-e2e` **89/89**、`pointer-selector` **11/11**（见 [run log](docs/TEST-RUN-2026-11-01-0.1.15.md)）。
 
-- `npm test` —— 不需要 ego lite，126 项纯函数回归：`cli-outcome`、`output-collector`、`locator-detect`、`ended-task-outcome`、`function-source`（含 N4 分类表与 **N4-a 注释 / N4-b 关键字 regex** 用例）、`generated-scripts` + `test/fake-cli/nodejs`（假 ego CLI 断言生成脚本：R1–R11、N1/N2/N5、N4/N6/N7/N9/N2①、N4-a/N4-b 回归）。
+- `npm test` —— 不需要 ego lite，**121** 项：`cli-outcome`、`output-collector`、`locator-detect`、`ended-task-outcome`、`generated-scripts` + `test/fake-cli/nodejs`（假 ego CLI 断言生成脚本：R1–R11、N1/N2/N5、N4/N6/N7/N9/N2①、以及 0.1.15 的 oracle/probe 契约——尾分号、空表达式、双包装拒绝、显式表达式的函数值标记、auto 调用函数值、wait 谓词真超时）。`test/function-source.test.mjs` 已随 `isFunctionSource` 一并移除。
 - `npm run test:live` —— 需要 ego lite 在运行、已完成 onboarding；**真浏览器套件必须串行跑**（ego 的「当前选中 space/page」是应用级全局状态，并发会串页）。
   - `test/live-e2e.mjs`（89 项）：动作回执、下载、文件选择器、快照、粘贴、指针，以及 0.1.9–0.1.13 的回读/fail-closed/`pageCreated`/abort/nonce/函数源码等；0.1.14 增补带注释/关键字 regex 的谓词被判为裸函数源码、带注释的 false 谓词在 600 ms 下必须超时失败。
   - `test/pointer-selector.mjs`（11 项）：`mouse_click` 只接受 x/y 或纯 CSS 选择器，ref/loc= 必须报错而不是点 (0,0)。
 
-0.1.14 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.14.md](docs/TEST-RUN-2026-11-01-0.1.14.md)；历史日志：
+0.1.15 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.15.md](docs/TEST-RUN-2026-11-01-0.1.15.md)；历史日志：
+[docs/TEST-RUN-2026-11-01-0.1.14.md](docs/TEST-RUN-2026-11-01-0.1.14.md)（0.1.14）、
 [docs/TEST-RUN-2026-11-01-0.1.13.md](docs/TEST-RUN-2026-11-01-0.1.13.md)（0.1.13）、
 [docs/TEST-RUN-2026-11-01-0.1.12.md](docs/TEST-RUN-2026-11-01-0.1.12.md)（0.1.12）、
 [docs/TEST-RUN-2026-11-01-0.1.11.md](docs/TEST-RUN-2026-11-01-0.1.11.md)（0.1.11）、

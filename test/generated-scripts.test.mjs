@@ -431,7 +431,7 @@ test("T: invalid function/JavaScript sources are rejected before spawning", asyn
 		{ env: { EGO_FAKE_DUMP: waitDump } }
 	);
 	assert.equal(waitOut.ok, false, JSON.stringify(waitOut));
-	assert.match(String(waitOut.error ?? ""), /needs a valid function source or expression/);
+	assert.match(String(waitOut.error ?? ""), /needs one valid expression or function source/);
 	assert.equal(existsSync(waitDump), false, "no CLI process may be spawned");
 
 	const jsDump = scratchPath("js-syntax.dump");
@@ -824,12 +824,12 @@ test("N4-b: a keyword-regex predicate is a bare function source", async () => {
 	assert.match(String(out.error ?? ""), /waitForFunction timed out/);
 	const script = lastScript(dump);
 	assert.ok(
-		script.includes("waitForFunction((("),
-		"the predicate must be the bare function source, not a wrapper"
+		script.includes("typeof __v === \"function\""),
+		"the predicate must be the 0.1.15 value probe (evaluate, call only when it is a function)"
 	);
 	assert.ok(
 		!script.includes("waitForFunction(() => (("),
-		"a wrapper would make the arrow itself truthy and pass on the first poll"
+		"the old expression wrapper would make the arrow itself truthy and pass on the first poll"
 	);
 	assert.ok(script.includes("/}/.test(x)"), "the regex literal must survive into the generated script");
 });
@@ -839,4 +839,201 @@ test("N4: a comment-bearing true predicate still passes", async () => {
 	const expression = "(x = 1) => { /* keep */ return x > 0; }";
 	const out = await run("ego_app_wait", { name: "fake-space", for: "function", expression, timeoutMs: 600 });
 	assert.equal(out.ok, true, JSON.stringify(out));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 0.1.15: parser oracle + value probe
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("P1: a trailing semicolon is a value, not a statement body", async () => {
+	const expr = await run("ego_app_js", { name: "fake-space", expression: "1+1;" });
+	assert.equal(expr.ok, true, JSON.stringify(expr));
+	assert.equal(expr.value, 2, "`1+1;` must evaluate as an expression");
+
+	const arrow = await run("ego_app_js", { name: "fake-space", expression: "() => 1;" });
+	assert.equal(arrow.ok, true, JSON.stringify(arrow));
+	assert.equal(arrow.value, 1, "`() => 1;` must still be called");
+
+	const fnWithArg = await run("ego_app_js", { name: "fake-space", fn: "(x) => x + 1;", arg: 41 });
+	assert.equal(fnWithArg.ok, true, JSON.stringify(fnWithArg));
+	assert.equal(fnWithArg.value, 42, "`fn:` with a trailing semicolon must still receive the arg");
+
+	const waitSemi = await run("ego_app_wait", { name: "fake-space", for: "function", expression: "() => 1;", timeoutMs: 400 });
+	assert.equal(waitSemi.ok, true, JSON.stringify(waitSemi));
+});
+
+test("P2: an empty js source is refused instead of silently evaluating nothing", async () => {
+	const missing = await run("ego_app_js", { name: "fake-space" });
+	assert.equal(missing.ok, false, JSON.stringify(missing));
+	assert.match(String(missing.error ?? ""), /expression is required/);
+
+	const blank = await run("ego_app_js", { name: "fake-space", expression: "   " });
+	assert.equal(blank.ok, false, JSON.stringify(blank));
+	assert.match(String(blank.error ?? ""), /expression is required/);
+
+	const withFn = await run("ego_app_js", { name: "fake-space", fn: "() => 7" });
+	assert.equal(withFn.ok, true, JSON.stringify(withFn));
+	assert.equal(withFn.value, 7);
+});
+
+test("P3: explicit expression mode never calls the source and reports a function value", async () => {
+	const explicit = await run("ego_app_js", { name: "fake-space", expression: "() => 1", mode: "expression" });
+	assert.equal(explicit.ok, true, JSON.stringify(explicit));
+	assert.equal(explicit.value, null, "a function value cannot travel as JSON");
+	assert.equal(explicit.valueType, "function");
+	assert.match(String(explicit.note ?? ""), /evaluated to a function/);
+
+	const called = await run("ego_app_js", { name: "fake-space", expression: "() => 1", mode: "function" });
+	assert.equal(called.ok, true, JSON.stringify(called));
+	assert.equal(called.value, 1);
+});
+
+test("P4: statement bodies run and a function-valued result is reported", async () => {
+	const body = await run("ego_app_js", { name: "fake-space", mode: "statements", expression: "const x = 1; return x;" });
+	assert.equal(body.ok, true, JSON.stringify(body));
+	assert.equal(body.value, 1);
+
+	const auto = await run("ego_app_js", { name: "fake-space", expression: "const x = 1; return x;" });
+	assert.equal(auto.ok, true, JSON.stringify(auto));
+	assert.equal(auto.value, 1, "auto must fall back to statements when the source is not an expression");
+
+	const returnsFunction = await run("ego_app_js", { name: "fake-space", mode: "statements", expression: "const f = () => 1; return f;" });
+	assert.equal(returnsFunction.ok, true, JSON.stringify(returnsFunction));
+	assert.equal(returnsFunction.value, null);
+	assert.equal(returnsFunction.valueType, "function");
+});
+
+test("P5: a source that would escape the wrapper is refused before spawning", async () => {
+	const jsDump = scratchPath("p5-js.dump");
+	const escaped = await run("ego_app_js", { name: "fake-space", expression: "1); evil(); (2" }, { env: { EGO_FAKE_DUMP: jsDump } });
+	assert.equal(escaped.ok, false, JSON.stringify(escaped));
+	assert.match(String(escaped.error ?? ""), /not valid JavaScript|single valid expression/);
+	assert.equal(existsSync(jsDump), false, "no CLI process may be spawned");
+
+	const waitDump = scratchPath("p5-wait.dump");
+	const waitEscaped = await run(
+		"ego_app_wait",
+		{ name: "fake-space", for: "function", expression: "1); evil(); (2", timeoutMs: 400 },
+		{ env: { EGO_FAKE_DUMP: waitDump } }
+	);
+	assert.equal(waitEscaped.ok, false, JSON.stringify(waitEscaped));
+	assert.match(String(waitEscaped.error ?? ""), /not a single expression/);
+	assert.equal(existsSync(waitDump), false, "no CLI process may be spawned");
+});
+
+test("P6: auto mode evaluates expressions and calls function values", async () => {
+	const plain = await run("ego_app_js", { name: "fake-space", expression: "1 + 1" });
+	assert.equal(plain.ok, true, JSON.stringify(plain));
+	assert.equal(plain.value, 2);
+
+	const object = await run("ego_app_js", { name: "fake-space", expression: "() => ({ a: 1 })" });
+	assert.equal(object.ok, true, JSON.stringify(object));
+	assert.deepEqual(object.value, { a: 1 });
+
+	const withArg = await run("ego_app_js", { name: "fake-space", expression: "(x) => x * 2", arg: 21 });
+	assert.equal(withArg.ok, true, JSON.stringify(withArg));
+	assert.equal(withArg.value, 42);
+
+	const globals = await run("ego_app_js", { name: "fake-space", expression: "Math.max(1, 2)" });
+	assert.equal(globals.ok, true, JSON.stringify(globals));
+	assert.equal(globals.value, 2);
+});
+
+test("P7: the wait predicate is a probe, so false predicates keep polling", async () => {
+	const falseArrow = await run("ego_app_wait", { name: "fake-space", for: "function", expression: "() => false", timeoutMs: 200 });
+	assert.equal(falseArrow.ok, false, JSON.stringify(falseArrow));
+	assert.match(String(falseArrow.error ?? ""), /waitForFunction timed out/);
+
+	const falseFn = await run("ego_app_wait", { name: "fake-space", for: "function", expression: "(x = 1) => x > 5", timeoutMs: 200 });
+	assert.equal(falseFn.ok, false, JSON.stringify(falseFn));
+	assert.match(String(falseFn.error ?? ""), /waitForFunction timed out/);
+
+	const trueFn = await run("ego_app_wait", { name: "fake-space", for: "function", expression: "(x = 1) => x > 0", timeoutMs: 400 });
+	assert.equal(trueFn.ok, true, JSON.stringify(trueFn));
+
+	const expression = await run("ego_app_wait", { name: "fake-space", for: "function", expression: "1 + 1", timeoutMs: 400 });
+	assert.equal(expression.ok, true, JSON.stringify(expression));
+
+	const commented = await run("ego_app_wait", { name: "fake-space", for: "function", expression: "(x) => { // c\n return x > 5; }", timeoutMs: 200 });
+	assert.equal(commented.ok, false, JSON.stringify(commented));
+	assert.match(String(commented.error ?? ""), /waitForFunction timed out/);
+});
+
+test("P8: async results are awaited before the function-value check", async () => {
+	const asyncArrow = await run("ego_app_js", { name: "fake-space", expression: "async () => () => 1" });
+	assert.equal(asyncArrow.ok, true, JSON.stringify(asyncArrow));
+	assert.equal(asyncArrow.value, null, "a function that resolves to a function must be reported, not dropped");
+	assert.equal(asyncArrow.valueType, "function");
+
+	const promiseExpression = await run("ego_app_js", { name: "fake-space", expression: "() => Promise.resolve(() => 1)", mode: "expression" });
+	assert.equal(promiseExpression.ok, true, JSON.stringify(promiseExpression));
+	assert.equal(promiseExpression.value, null);
+	assert.equal(promiseExpression.valueType, "function");
+
+	const asyncFn = await run("ego_app_js", { name: "fake-space", fn: "async (x) => x + 1", arg: 1 });
+	assert.equal(asyncFn.ok, true, JSON.stringify(asyncFn));
+	assert.equal(asyncFn.value, 2, "an async fn: result must be awaited");
+});
+
+test("P9: a semicolon-only source is still an empty source", async () => {
+	const onlySemicolon = await run("ego_app_js", { name: "fake-space", expression: ";" });
+	assert.equal(onlySemicolon.ok, false, JSON.stringify(onlySemicolon));
+	assert.match(String(onlySemicolon.error ?? ""), /expression is required/);
+
+	const twoSemicolons = await run("ego_app_js", { name: "fake-space", expression: ";;" });
+	assert.equal(twoSemicolons.ok, false, JSON.stringify(twoSemicolons));
+	assert.match(String(twoSemicolons.error ?? ""), /expression is required/);
+});
+
+test("P10: a statements body may end with a line comment", async () => {
+	const commented = await run("ego_app_js", { name: "fake-space", mode: "statements", expression: "const a = 1; // note" });
+	assert.equal(commented.ok, true, JSON.stringify(commented));
+	assert.equal(commented.value, undefined, "the body returns nothing; the call still succeeds");
+
+	const value = await run("ego_app_js", { name: "fake-space", mode: "statements", expression: "const a = 1; return a; // note" });
+	assert.equal(value.ok, true, JSON.stringify(value));
+	assert.equal(value.value, 1);
+});
+
+test("P11: a Promise that resolves to a function is reported in auto mode too", async () => {
+	const promiseFn = await run("ego_app_js", { name: "fake-space", expression: "Promise.resolve(() => 1)" });
+	assert.equal(promiseFn.ok, true, JSON.stringify(promiseFn));
+	assert.equal(promiseFn.value, null, "auto must await the expression before deciding it is not a plain value");
+	assert.equal(promiseFn.valueType, "function");
+
+	const iife = await run("ego_app_js", { name: "fake-space", expression: "(async () => () => 1)()" });
+	assert.equal(iife.ok, true, JSON.stringify(iife));
+	assert.equal(iife.value, null);
+	assert.equal(iife.valueType, "function");
+});
+
+test("P12: comment-only and semicolon-only sources are empty", async () => {
+	for (const expression of ["; ;", ";\n;", "; // c", "/*c*/;"]) {
+		const out = await run("ego_app_js", { name: "fake-space", expression });
+		assert.equal(out.ok, false, expression + " -> " + JSON.stringify(out));
+		assert.match(String(out.error ?? ""), /expression is required/, expression);
+	}
+	const waitEmpty = await run("ego_app_wait", { name: "fake-space", for: "function", expression: ";", timeoutMs: 300 });
+	assert.equal(waitEmpty.ok, false, JSON.stringify(waitEmpty));
+	assert.match(String(waitEmpty.error ?? ""), /expression is required/);
+});
+
+test("P13: an empty-source guard stays linear on many block comments (no ReDoS)", async () => {
+	const noisy = "/*a*/".repeat(28) + "1+1";
+	const started = Date.now();
+	const out = await run("ego_app_js", { name: "fake-space", expression: noisy });
+	const elapsed = Date.now() - started;
+	assert.equal(out.ok, true, JSON.stringify(out));
+	assert.equal(out.value, 2);
+	assert.ok(elapsed < 2000, `guard must be linear, took ${elapsed} ms`);
+
+	const empty = await run("ego_app_js", { name: "fake-space", expression: "/*a*/".repeat(28) + ";" });
+	assert.equal(empty.ok, false, JSON.stringify(empty));
+	assert.match(String(empty.error ?? ""), /expression is required/);
+
+	const mixed = await run("ego_app_js", { name: "fake-space", expression: "/*a*/; // b\n".repeat(26) + "x" });
+	// Not empty: it runs as a statement body, so the unknown identifier is a runtime
+	// error — the guard only answers "is there any code here?".
+	assert.equal(mixed.ok, false, JSON.stringify(mixed));
+	assert.match(String(mixed.error ?? ""), /x is not defined/);
 });

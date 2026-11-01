@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.15 — 2026-11-01
+
+重构：**删掉手写词法扫描器，改用「引擎 parser 当 oracle + value probe」**，并修掉重构后暴露的真缺陷（本轮由 Lead 在用户重构之上完成）。
+
+- **设计**：`parsesAsExpression(src)` 只用 `new Function("return (src
+);")` 编译（不执行），注释/正则/生成器语法由 V8 裁决；`valueProbe(src, withArg)` 求值后**仅当结果是函数才调用**。`ego_app_wait{for:'function'}` 的谓词与 `ego_app_js` 的 auto 值模式都用 probe——"函数源码被当 truthy 表达式 → wait 首轮假通过"从根上消失。`syntaxProblem` 的包装加 `NL`，尾部 `//` 注释放不再吞掉 `);`。
+- **尾分号**：`trimSource` 只做 trim + 去尾分号（不是词法分析）——`{expression:"1+1;"}`→2、`{expression:"() => 1;"}`→1、`fn:"(x)=>x+1;"`+`arg`→42、`wait{expression:"() => 1;"}` 可执行。
+- **空源码**：`ego_app_js{}`、`{expression:""}` 以及**只含空白/分号/注释**的源码（`;`/`;;`/`; ;`/`; // c`/`/*c*/;`）明确报 `expression is required`；`wait{expression:";"}` 报 `expression is required for for="function"`（以前静默 `evaluate(() => undefined)`）。
+- **函数值不再静默丢（含 async/Promise）**：显式 `mode:"expression"`、`mode:"function"`（函数返回值）、`mode:"statements"`（体内返回函数）以及 auto 的 probe 统一标记 `{ value: null, valueType: "function", note: … }`；四个外壳都改为 **`async` 并在 `await` 之后判断**，auto 的非函数分支也 await，所以 `async () => () => 1`、`() => Promise.resolve(() => 1)`、`Promise.resolve(() => 1)`、`(async () => () => 1)()` 都不再静默丢（auto 的行为是调用函数，见下）。**副作用**：`statements` 体型现在支持**顶层 `await`**（以前是语法错误），所有模式的 Promise 都会被 await/flatten。
+- **包装逃逸在 spawn 前拒绝**：新增**双包装 oracle**——同一源码必须同时通过 `(src)` 与 `[src]` 两种编译；`js{expression:"1); evil(); (2"}` 这类"关闭括号后写语句"的来源得到可读错误且**零 spawn**（"Nothing ran" 承诺成立），`wait` 同样。
+- **语义**：`js` auto = 求值，结果是函数则**调用**（`() => 1+1`→2、`() => ({a:1})`→对象）；`mode:"expression"` **绝不调用**；`mode:"function"`/`fn:` 调用（单参 `arg`）；`mode:"statements"` 当函数体执行；`wait` 谓词 = probe（求值，函数则调用）。
+- **已知限制（宣布不修，不是待办 BUG）**：(A) 刻意构造同时满足两种包装的源码理论上仍可绕过 oracle——源码由调用方/模型提供，等价于 `ego_app_run`，彻底消除需引入 JS parser 依赖，本项目不引入；(B) `js` auto 会调用函数值——生成器调用返回 truthy 迭代器（wait 立即满足），`class A {}` 被调用会抛 `Class constructor cannot be invoked without 'new'`，要"只取值不调用"用 `mode:"expression"`；(C) 其余既有 S3：结构化 `log` 上限 16000（`logLength` 为 UTF-16 字符数）、非字符串 label 原样进结果、`id:0` 是真实空间、上游/环境项。
+- **移除导出（patch bump 需知）**：公开导出 `isFunctionSource` 随重构移除；若外部代码 import 它请改用行为契约（`wait`/`js` 的 probe 语义）。测试 `test/function-source.test.mjs` 一并删除，覆盖并入 `test/generated-scripts.test.mjs`（P1–P13：尾分号、分号/注释空源、双包装拒绝、显式表达式/statements/function 的函数值标记、async 函数值标记、auto 的 Promise→函数标记、auto 调用函数值、wait 谓词真超时、空源守卫线性度回归）。计数见下方 gate 行。
+- 测试（最终 gate，2026-11-02 00:17:24–00:19:25）：`npm test` **121/121**、`live-e2e` **89/89**、`pointer-selector` **11/11**（跑前/跑后 sha 均 `cf102529…`）。
+
 ## 0.1.14 — 2026-11-01
 
 收掉 0.1.13 残留的最后两条 N4 词法边缘（N4-a/N4-b），其余行为不变。
