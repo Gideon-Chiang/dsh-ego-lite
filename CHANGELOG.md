@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.16 — 2026-11-03
+
+按仓库新立的 **[docs/BUG-STANDARD.md](docs/BUG-STANDARD.md)** 把 0.1.15 遗留的缺陷清完。判定标准：**bug = 一个失败的 oracle**（L1 外部规范 > L2 冻结契约 > L3 不变量 > L4 差分 > L5 危害），**判定与处置分离**——"已知限制"只改变处置，不改变 bug 判定。
+
+- **新增判定标准**：`docs/BUG-STANDARD.md`（分层 oracle、9 条项目不变量、6 问判定流程、S1–S4 定级与处置规则、已裁定事项表、条目模板）。README 中英各加 0.1.16 行为节，并修正 0.1.15 已知限制 (A) 的误导性描述（把"可能绕过 oracle、需要 parser 才能消除"改成：双包装挡的是语法级逃逸；通过门禁的源码本身就是表达式，其副作用是 `ego_app_js` 的固有能力，与 `ego_app_run` 同级，parser 也消不掉）。
+- **[S3] 行注释的行尾（L1 ECMAScript + L4 与 V8 差分）**：空源守卫只认 `\n`，以**孤立 CR** 或 U+2028/U+2029 结束的行注释会把后面的代码一起当注释吃掉 → `js{expression:"// c\u000d1"}` 被误拒为 `expression is required`。现在 LF/CR/U+2028/U+2029 都是行尾（`skipLineComment`，仍是 O(n) 无回溯）；纯注释照旧拒绝。
+- **[S3] 函数值标记带每次调用的随机 nonce（L3-1/L3-8）**：宿主只比对 `rawValue.__dshFunctionValue === true`，所以页面数据/调用方表达式返回 `{__dshFunctionValue:true, secret:42}` 会被误报成"函数值不可承载"并**丢掉整个对象**。现在标记里带随机 token 并与宿主比对，伪造值按普通 JSON 返回（`value` 完整、无 `valueType`），真函数仍返回 `{value:null, valueType:"function", note}`。
+- **[S3] `fn:` 的冲突输入被拒绝（L3-5）**：`{fn:"(x)=>x", arg:2, mode:"expression"}` 以前静默忽略 `mode`；`{fn:"(arg)=>arg.n", expression:"999"}` 以前**静默丢掉 expression**。现在两者都报错（`fn:` 等价 `mode:"function"`；`fn:` 与 `expression:` 二选一）。
+- **[S3] `arg` 只在"源码会被调用"时接受（L3-5）**：`mode:"statements"`/`mode:"expression"` 下传 `arg` 以前被静默丢弃；**auto 回落到语句体时同样丢弃**（审查发现）。现在三种情况都直接拒绝并给出替代（`fn:` / `mode:"function"` / 单个表达式）。
+- **[S4] `wait` 的空源文案统一（L3-6）**：`"; ;"`、`"// c"`、`"/*c*/;"` 与 `";"` 统一为 `expression is required for for="function".`；删除 `String(args.expression ?? "true")` 的死默认值。
+- **[S3] 不生效的参数一律拒绝，不再静默忽略（L3-5）**：
+  - `ego_app_key`：`press`/`down`/`up` 必须显式给 `key`（缺省会**静默按 Enter**，可能提交表单）；`selector` 仅 `press`、`html` 仅 `paste`、`text` 仅 `type`/`insert_text`/`paste`。
+  - `ego_app_pointer`：`move` 必须给 `x`/`y`、`scroll` 必须给非零 `deltaX`/`deltaY`（以前分别静默移动到 (0,0)、滚 0）；`button`/`from`/`to`/`x`/`y`/`deltaX`/`deltaY`/`label` 按 action 白名单校验。live 套件里 2 处给 `ego_app_pointer` 传 `timeoutMs`（该工具从不读它）的调用已按新契约改正。
+  - `ego_app_page`：`selector` 仅 `focus`、`url`/`options` 仅 `fetch`、`files` 仅 `file_chooser`、`event`/`saveAs` 仅 `wait_event`（`saveAs` 仅 download）、`trigger` 仅 `file_chooser`/`wait_event`；`fetch` 不再接受 `timeoutMs`（从未使用）且缺 `url` 直接报错。
+  - `ego_app_wait`：按 `for` 白名单校验（`wait{for:"url", selector:"#x"}` 不再忽略 selector）；`load_state` 现在真的把 `timeoutMs` 传给 `page.waitForLoadState`。
+  - `ego_app_space`：20 个 action 各自的参数白名单（如 `{action:"create", id:5}`、`{action:"list", ids:[…]}` 不再静默丢参数）。
+  - `ego_app_tabs`：非法 `scope` 报错（以前静默当作 `app`）；`url` 仅 `scope:"app"` + `action:"open"`。
+  - `ego_app_dialog`：`promptText` 仅 `accept`；`waitMs` 必须配合 `trigger`；`waitMs` 的 30 s 上限现在回显 `waitMs:{requested,applied,clamped}`（对齐 `wait_control`），不再静默截断。
+  - `ego_app_gesture`：`highlight` 必须给 `x`/`y`（以前画在 (0,0)）；`gesture` 的默认命令回显在结果 `command` 里（`highlight` 回显 `point`）。
+  - `ego_app_click`：`clickCount` 必须是正整数（`0` 以前被当作 falsy 静默变成单击）。
+  - `ego_app_select`：`index` 与 `label`/`value` 同传会报错（`index` 无条件最先命中，另两个标识符静默蒸发；`label` 覆盖 `value` 是既有文档行为，保持不变）。
+  - `ego_app_page{action:"wait_event"}`：非法的 `event` 现在先按事件名校验（以前会先报 `saveAs` 参数错，误导排查方向）。
+- **[S3] `ego_app_space{action:"finish"}` 的 `keep`/`keepPages`（L3-5）**：`keepPages: []` 现在表示"一页都不留"（以前被当成没传、反而保留全部）；同时传 `keep` 与 `keepPages` 报错。
+- **测试**：`npm test` **133/133**（新增 P14–P25，覆盖行尾、marker 伪造、fn/mode/expression/arg 拒绝、wait 文案、参数白名单、gesture、finish、dialog waitMs 回显、select index 冲突）；`live-e2e` **89/89**、`pointer-selector` **11/11**（真 ego lite 0.6.2.5，串行）。
+- **独立审查**：两轮 `xiaomi/mimo-v2.6-flash`（max）只读复核共报 4 条（S3×3：`fn:`+`expression:` 丢 expression、auto+`arg`+语句体丢 arg、`select{index + label/value}` 丢 label/value；S4×1：dialog `waitMs` 截断不回显、`wait_event` 非法事件名先报参数错），均已按同一标准修掉并补 P21–P25。
+- **未修（宣布，见 README (B)(C) 与 BUG-STANDARD §6）**：auto 调用函数值的语义（含生成器 truthy / `class` 抛错）、`a: 1` 回落 statements 后无值、JSON 承载限制、`logLength` 单位、`delete{force:true}` 无法绕过 agent-owned 目标、上游/环境限制。
+
 ## 0.1.15 — 2026-11-01
 
 重构：**删掉手写词法扫描器，改用「引擎 parser 当 oracle + value probe」**，并修掉重构后暴露的真缺陷（本轮由 Lead 在用户重构之上完成）。

@@ -160,7 +160,7 @@ const advId = advanced.spaceId;
 const nav = await call("ego_app_navigate", { name: "e2e-进阶", url: fixture });
 check("advanced fixture opens", nav.ok === true && /interaction\.html/.test(nav.url ?? ""), { ok: nav.ok });
 
-const rightClick = await call("ego_app_pointer", { action: "mouse_click", name: "e2e-进阶", selector: "#ctx", button: "right", timeoutMs: 8000 });
+const rightClick = await call("ego_app_pointer", { action: "mouse_click", name: "e2e-进阶", selector: "#ctx", button: "right" });
 const ctxCount = await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('ctxOut').textContent" });
 check(
 	"pointer button=right reaches the page",
@@ -377,7 +377,7 @@ const ctxBefore = Number(
 	(await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('ctxOut').textContent" })).value
 );
 const cssClick = await call("ego_app_pointer", {
-	action: "mouse_click", name: "e2e-进阶", selector: "css=#ctx", button: "right", timeoutMs: 8000
+	action: "mouse_click", name: "e2e-进阶", selector: "css=#ctx", button: "right"
 });
 const ctxAfter = Number(
 	(await call("ego_app_js", { name: "e2e-进阶", expression: "document.getElementById('ctxOut').textContent" })).value

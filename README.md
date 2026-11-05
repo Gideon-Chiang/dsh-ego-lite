@@ -81,6 +81,27 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 
 任意官方 API 都能通过 `ego_app_run` 使用（`const task = await taskSpace(...)`、`await task.page('p1')`、`page.*`、`ego.*`、`fetch`）。注意 `taskSpace()` 返回 Promise，**必须 `await`**，否则会得到 `task.page is not a function`。
 
+## 行为变化（0.1.16，升级前必读）
+
+0.1.16 按 [docs/BUG-STANDARD.md](docs/BUG-STANDARD.md) 的判定标准把 0.1.15 遗留的缺陷清完。该标准把**判定**（是不是缺陷：以 L1–L5 的独立 oracle 为准）与**处置**（修不修）分开，并且"已知限制"只改变处置、不改变判定。
+
+1. **行注释按 ECMAScript 行终止符结束**（L1 ECMAScript + L4 与 V8 差分）：`saysNothing()` 以前只认 `\n`，`{expression:"// c\u000d1"}`（孤立 CR 行尾）或 U+2028/U+2029 行尾会被误判成"空源码"并拒绝。现在 LF/CR/U+2028/U+2029 都算行尾；`"// c\u000d\u000a1"`、`"// c\u000a1"` 行为不变，纯注释仍然拒绝。
+2. **函数值标记带每次调用的随机 nonce**（L3-1/L3-8）：以前宿主只比对 `rawValue.__dshFunctionValue === true`，页面数据或调用方表达式返回 `{__dshFunctionValue:true, secret:42}` 会被误报成"函数值不可承载"并**丢掉整个对象**。现在标记里带随机 token，伪造值按普通 JSON 返回（`value` 完整、无 `valueType`），真函数仍返回 `{value:null, valueType:"function", note}`。
+3. **`fn:` 与另一个来源/模式冲突时被拒绝**（L3-5）：`{fn:"(x)=>x", arg:2, mode:"expression"}` 以前静默忽略 `mode`；`{fn:"(arg)=>arg.n", expression:"999"}` 以前静默丢掉 `expression`。现在两者都报错（`fn:` 等价 `mode:"function"`；`fn:` 与 `expression:` 只能二选一）。
+4. **`arg` 只在"源码会被调用"时接受**（L3-5）：`mode:"statements"` / `mode:"expression"` 下传 `arg` 以前被静默丢弃；auto 回落到语句体时同样丢弃。现在这三种情况都直接拒绝并说明替代（`fn:` / `mode:"function"` / 单个表达式）；auto + 函数源码仍允许（`arg` 的生效条件写进了 schema 描述）。
+5. **`wait` 的空源文案统一**（L3-6）：`{for:"function", expression:"; ;"}` / `"// c"` / `"/*c*/;"` 现在与 `";"` 一样返回 `expression is required for for="function".`（以前走 `not a single expression`）。`String(args.expression ?? "true")` 的死默认值一并删除。
+6. **"不生效的参数"一律拒绝，不再静默忽略**（L3-5，覆盖 `ego_app_key` / `ego_app_pointer` / `ego_app_page` / `ego_app_gesture`）：
+   - `ego_app_key`：`press`/`down`/`up` 必须显式给 `key`（以前缺省会**静默按 Enter**，可能提交表单）；`selector` 只对 `press` 有效、`html` 只对 `paste` 有效、`text` 只对 `type`/`insert_text`/`paste` 有效，越界组合报错。
+   - `ego_app_pointer`：`move` 必须给 `x`/`y`、`scroll` 必须给非零 `deltaX`/`deltaY`（以前分别静默移动到 (0,0)、滚 0）；`button`/`from`/`to`/`x`/`y`/`deltaX`/`deltaY`/`label` 只对相应 action 有效。
+   - `ego_app_page`：`selector` 只对 `focus`、`url`/`options` 只对 `fetch`、`files` 只对 `file_chooser`、`event`/`saveAs` 只对 `wait_event`（`saveAs` 仅 download）、`trigger` 只对 `file_chooser`/`wait_event`；`fetch` 不再接受 `timeoutMs`（它从未被使用），`fetch` 缺 `url` 直接报错。
+   - `ego_app_gesture`：`highlight` 必须给 `x`/`y`（以前画在 (0,0)），`command` 只对 `gesture` 有效；`gesture` 的默认命令现在回显在结果的 `command` 字段里（`highlight` 回显 `point`）。
+   - `ego_app_wait`：按 `for` 校验参数（`wait{for:"url", selector:"#x"}` 以前忽略 `selector`）；`load_state` 现在真的把 `timeoutMs` 传给 `page.waitForLoadState`。
+   - `ego_app_space` / `ego_app_tabs` / `ego_app_dialog`：每个 action 只接受自己的参数（如 `create{id}`、`list{ids}`、`tabs{scope:"space", url}`、`dialog{dismiss, promptText}` 都会报错而不是静默忽略）；`tabs` 的非法 `scope` 不再被当作 `app`；`dialog` 的 30 s `waitMs` 上限回显为 `waitMs:{requested,applied,clamped}`。
+   - `ego_app_click`：`clickCount` 必须是正整数（`0` 以前被当作 falsy 静默变成单击）。
+   - `ego_app_select`：`index` 与 `label`/`value` 同传报错（`index` 以前无条件最先命中，另两个标识符静默蒸发；`label` 覆盖 `value` 是既有文档行为，不变）；`wait_event` 的非法 `event` 现在先按事件名报错。
+7. **`ego_app_space{action:"finish"}` 的 `keep`/`keepPages`**（L3-5）：`keepPages: []` 现在表示"一页都不留"（以前被当成"没传"，反而保留全部）；同时传 `keep` 与 `keepPages` 会报错，不再让 `keep` 被静默忽略。
+8. 以上每条都在 spawn 之前拒绝（"Nothing ran" 仍成立），并各有回归测试（P14–P25）。
+
 ## 行为变化（0.1.15，升级前必读）
 
 0.1.15 把"手写词法扫描器"整体删掉，换成**用引擎自己的 parser 当 oracle + 一个 value probe**；上一版那些"注释/正则/生成器/嵌套默认参数"的分类边缘从根上消失。
@@ -92,9 +113,9 @@ ego_app_js      { name: "查订单", expression: "document.querySelector('#resul
 5. **空源码被拒绝（守卫是线性扫描）**：`ego_app_js{}`、`{expression:""}`、以及**只含空白/分号/注释**的源码（`;`、`;;`、`; ;`、`; // c`、`/*c*/;`）→ `expression is required`；`wait{expression:";"}` 同样报 `expression is required for for="function"`（以前会静默求值出 `undefined`）。
 6. **包装逃逸在 spawn 前被拒绝**：同一源码必须同时通过 `(src)` 与 `[src]` 两种编译（双包装 oracle），所以 `js{expression:"1); evil(); (2"}` 这类"关闭括号后写语句"的源码得到可读错误且**零 spawn**——"Nothing ran" 的承诺成立。
 7. **已知限制（宣布不修，不是待办 BUG）**：
-   - (A) 刻意构造同时满足两种包装的源码，理论上仍可能绕过 oracle；源码由调用方/模型提供，能力等价于 `ego_app_run`，要彻底消除需引入 JS parser 依赖（本项目不引入）。
+   - (A) **0.1.16 修正了这里的描述**：双包装 oracle 挡住的是"语法级逃逸"——要逃出 `( … )` 必须闭合 `)`、要逃出 `[ … ]` 必须闭合 `]`，同一段源码里同时做到这两件事必然在其中一侧留下多余括号（实测 25 条混种全部拒绝、"Nothing ran" 成立）。而**通过门禁的源码本身就是合法表达式**，所以它当然可以执行代码（`(() => { evil() })()`）；那是 `ego_app_js` 的固有能力，不是 oracle 的缺口——引入 JS parser 也消不掉。调用方与 `ego_app_run` 是同一主体，威胁模型上没有增量。
    - (B) `js` 的 `auto` 会**调用**函数值：生成器函数被调用返回 truthy 迭代器（wait 会立即满足）、`class A {}` 被调用会抛 `Class constructor cannot be invoked without 'new'`。要"只取值不调用"用 `mode:"expression"`。`wait{for:'function'}` 的谓词同样**每次轮询都会求值并（若是函数）调用一次**，有副作用的函数不要当谓词；谓词抛错会中止等待并直接报错。
-   - (C) 其余既有 S3：结构化 `log` 上限 16000（`logLength` 是 UTF-16 字符数）、非字符串 label 原样进结果、`id:0` 是真实空间、上游/环境类限制（adopt 成功路径需用户页、真 app 同名空间不可构造、status 面板高亮不可观测、每空间 8 页预算、真浏览器套件必须串行）。
+   - (C) 其余既有 S3（0.1.16 逐条确认并补登记，不修）：结构化 `log` 上限 16000（`logLength` 是 UTF-16 字符数）、非字符串 label 原样进结果、`id:0` 是真实空间、JSON 承载限制（regex/Map/Set/Date/迭代器 → `{}`）、`a: 1` 这类合法语句体在 auto 回落 statements 后无值、`syntaxProblem` 只是"生成后自检"而非输入门禁、上游/环境类限制（adopt 成功路径需用户页、真 app 同名空间不可构造、status 面板高亮不可观测、每空间 8 页预算、真浏览器套件必须串行）。
 
 ## 行为变化（0.1.14，升级前必读）
 
@@ -212,14 +233,15 @@ ego 官方推荐形态是 Agent Skill（`~/.agents/skills/ego-browser/`）+ `ego
 
 ## 测试
 
-0.1.15 的实跑状态：`npm test` **121/121**、`live-e2e` **89/89**、`pointer-selector` **11/11**（见 [run log](docs/TEST-RUN-2026-11-01-0.1.15.md)）。
+0.1.16 的实跑状态：`npm test` **133/133**、`live-e2e` **89/89**、`pointer-selector` **11/11**（见 [run log](docs/TEST-RUN-2026-11-03-0.1.16.md)）。
 
-- `npm test` —— 不需要 ego lite，**121** 项：`cli-outcome`、`output-collector`、`locator-detect`、`ended-task-outcome`、`generated-scripts` + `test/fake-cli/nodejs`（假 ego CLI 断言生成脚本：R1–R11、N1/N2/N5、N4/N6/N7/N9/N2①、以及 0.1.15 的 oracle/probe 契约——尾分号、空表达式、双包装拒绝、显式表达式的函数值标记、auto 调用函数值、wait 谓词真超时）。`test/function-source.test.mjs` 已随 `isFunctionSource` 一并移除。
+- `npm test` —— 不需要 ego lite，**133** 项：`cli-outcome`、`output-collector`、`locator-detect`、`ended-task-outcome`、`generated-scripts` + `test/fake-cli/nodejs`（假 ego CLI 断言生成脚本：R1–R11、N1/N2/N5、N4/N6/N7/N9/N2①、0.1.15 的 oracle/probe 契约、0.1.16 的 P14–P25——行终止符、函数值 marker 不可伪造、`fn:`/`mode:`/`arg` 拒绝、wait 空源文案、参数白名单、gesture 坐标、finish keepPages）。`test/function-source.test.mjs` 已随 `isFunctionSource` 一并移除。
 - `npm run test:live` —— 需要 ego lite 在运行、已完成 onboarding；**真浏览器套件必须串行跑**（ego 的「当前选中 space/page」是应用级全局状态，并发会串页）。
   - `test/live-e2e.mjs`（89 项）：动作回执、下载、文件选择器、快照、粘贴、指针，以及 0.1.9–0.1.13 的回读/fail-closed/`pageCreated`/abort/nonce/函数源码等；0.1.14 增补带注释/关键字 regex 的谓词被判为裸函数源码、带注释的 false 谓词在 600 ms 下必须超时失败。
   - `test/pointer-selector.mjs`（11 项）：`mouse_click` 只接受 x/y 或纯 CSS 选择器，ref/loc= 必须报错而不是点 (0,0)。
 
-0.1.15 的实测记录见 [docs/TEST-RUN-2026-11-01-0.1.15.md](docs/TEST-RUN-2026-11-01-0.1.15.md)；历史日志：
+0.1.16 的实测记录见 [docs/TEST-RUN-2026-11-03-0.1.16.md](docs/TEST-RUN-2026-11-03-0.1.16.md)；历史日志：
+[docs/TEST-RUN-2026-11-01-0.1.15.md](docs/TEST-RUN-2026-11-01-0.1.15.md)（0.1.15）、
 [docs/TEST-RUN-2026-11-01-0.1.14.md](docs/TEST-RUN-2026-11-01-0.1.14.md)（0.1.14）、
 [docs/TEST-RUN-2026-11-01-0.1.13.md](docs/TEST-RUN-2026-11-01-0.1.13.md)（0.1.13）、
 [docs/TEST-RUN-2026-11-01-0.1.12.md](docs/TEST-RUN-2026-11-01-0.1.12.md)（0.1.12）、

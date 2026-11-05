@@ -1037,3 +1037,214 @@ test("P13: an empty-source guard stays linear on many block comments (no ReDoS)"
 	assert.equal(mixed.ok, false, JSON.stringify(mixed));
 	assert.match(String(mixed.error ?? ""), /x is not defined/);
 });
+
+// ── P14: every ECMAScript line terminator ends a line comment ──
+test("P14: a line comment ends at CR, U+2028 and CRLF, not only at LF", async () => {
+	// The empty-source guard used to end comments at "\n" only, so real code after a
+	// lone CR or U+2028 was rejected as "expression is required".
+	for (const expression of ["// c\r1", "// c\u20281", "// c\r\n1"]) {
+		const out = await run("ego_app_js", { name: "fake-space", expression });
+		assert.equal(out.ok, true, JSON.stringify(expression) + " -> " + JSON.stringify(out));
+		assert.equal(out.value, 1, JSON.stringify(expression));
+	}
+
+	const onlyComment = await run("ego_app_js", { name: "fake-space", expression: "// c\r" });
+	assert.equal(onlyComment.ok, false, JSON.stringify(onlyComment));
+	assert.match(String(onlyComment.error ?? ""), /expression is required/);
+});
+
+// ── P15: a forged function-value marker is data, not a lost value ──
+test("P15: page data that merely looks like the function marker is returned intact", async () => {
+	const forged = await run("ego_app_js", { name: "fake-space", expression: "({__dshFunctionValue:true, secret:42})" });
+	assert.equal(forged.ok, true, JSON.stringify(forged));
+	assert.deepEqual(forged.value, { __dshFunctionValue: true, secret: 42 });
+	assert.equal("valueType" in forged, false, "a forged marker must not turn the value into an unreportable function");
+
+	const realFunction = await run("ego_app_js", { name: "fake-space", expression: "() => 1", mode: "expression" });
+	assert.equal(realFunction.ok, true, JSON.stringify(realFunction));
+	assert.equal(realFunction.value, null, "a real function value cannot travel as JSON; it is reported, not dropped");
+	assert.equal(realFunction.valueType, "function");
+});
+
+// ── P16: fn/mode conflicts and arg misuse are rejected before any spawn ──
+test("P16: fn/mode conflicts and arg misuse are rejected with nothing ran", async () => {
+	const rejected = [
+		{ args: { fn: "(x)=>x", arg: 2, mode: "expression" }, pattern: /contradict|silently ignored/ },
+		{ args: { expression: "return 1", mode: "statements", arg: 9 }, pattern: /arg cannot be used with mode:"statements"/ },
+		{ args: { expression: "(x)=>x", mode: "expression", arg: 2 }, pattern: /arg cannot be used with mode:"expression"/ }
+	];
+	for (const { args, pattern } of rejected) {
+		const dump = scratchPath("p16.dump");
+		const out = await run("ego_app_js", { name: "fake-space", ...args }, { env: { EGO_FAKE_DUMP: dump } });
+		assert.equal(out.ok, false, JSON.stringify(args) + " -> " + JSON.stringify(out));
+		assert.match(String(out.error ?? ""), pattern, JSON.stringify(args));
+		assert.equal(existsSync(dump), false, "no CLI process may be spawned: " + JSON.stringify(args));
+	}
+
+	const fnCalled = await run("ego_app_js", { name: "fake-space", fn: "(x)=>x*3", arg: 4, mode: "function" });
+	assert.equal(fnCalled.ok, true, JSON.stringify(fnCalled));
+	assert.equal(fnCalled.value, 12);
+
+	const autoCalled = await run("ego_app_js", { name: "fake-space", expression: "(x)=>x*3", arg: 4 });
+	assert.equal(autoCalled.ok, true, JSON.stringify(autoCalled));
+	assert.equal(autoCalled.value, 12);
+});
+
+// ── P17: comment-only wait sources share one message (P12 covers ";") ──
+test("P17: every comment-only wait source reports the same 'expression is required'", async () => {
+	for (const expression of ["; ;", "// c", "/*c*/;"]) {
+		const dump = scratchPath("p17.dump");
+		const out = await run("ego_app_wait", { name: "fake-space", for: "function", expression, timeoutMs: 300 }, { env: { EGO_FAKE_DUMP: dump } });
+		assert.equal(out.ok, false, JSON.stringify(expression) + " -> " + JSON.stringify(out));
+		assert.match(String(out.error ?? ""), /expression is required for for="function"/, JSON.stringify(expression));
+		assert.equal(existsSync(dump), false, "no CLI process may be spawned: " + JSON.stringify(expression));
+	}
+});
+
+// ── P18: an unusable parameter is rejected instead of ignored ──
+test("P18: an unusable parameter is rejected instead of ignored (nothing ran)", async () => {
+	const rejected = [
+		["ego_app_key", { action: "press", selector: "#x" }],
+		["ego_app_key", { action: "type", text: "x", selector: "#x" }],
+		["ego_app_pointer", { action: "move" }],
+		["ego_app_pointer", { action: "scroll" }],
+		["ego_app_pointer", { action: "scroll", deltaY: 100, x: 10 }],
+		["ego_app_page", { action: "fetch" }],
+		["ego_app_page", { action: "close", files: ["C:/a.txt"] }],
+		["ego_app_page", { action: "fetch", url: "https://example.com", timeoutMs: 5000 }]
+	];
+	for (const [toolName, args] of rejected) {
+		const label = toolName + " " + JSON.stringify(args);
+		const dump = scratchPath("p18.dump");
+		const out = await run(toolName, { name: "fake-space", ...args }, { env: { EGO_FAKE_DUMP: dump } });
+		assert.equal(out.ok, false, label + " -> " + JSON.stringify(out));
+		assert.match(String(out.error ?? ""), /nothing ran/, label);
+		assert.equal(existsSync(dump), false, "no CLI process may be spawned: " + label);
+	}
+
+	// The same actions with their required parameter still work.
+	const pressed = await run("ego_app_key", { name: "fake-space", action: "press", key: "Enter" });
+	assert.equal(pressed.ok, true, JSON.stringify(pressed));
+
+	const moved = await run("ego_app_pointer", { name: "fake-space", action: "move", x: 10, y: 20 });
+	assert.equal(moved.ok, true, JSON.stringify(moved));
+});
+
+// ── P19: gesture coordinates, and the echoed default command ──
+test("P19: gesture coordinates are required and the default command is echoed", async () => {
+	const missing = await run("ego_app_gesture", { name: "fake-space", action: "highlight" });
+	assert.equal(missing.ok, false, JSON.stringify(missing));
+	assert.match(String(missing.error ?? ""), /highlight needs x and y/);
+
+	const highlighted = await run("ego_app_gesture", { name: "fake-space", action: "highlight", x: 1, y: 2 });
+	assert.equal(highlighted.ok, true, JSON.stringify(highlighted));
+	assert.deepEqual(highlighted.point, { x: 1, y: 2 });
+
+	const defaulted = await run("ego_app_gesture", { name: "fake-space", action: "gesture" });
+	assert.equal(defaulted.ok, true, JSON.stringify(defaulted));
+	assert.deepEqual(defaulted.command, { type: "think", label: "working" });
+});
+
+// ── P20: finish rejects conflicting keep inputs, accepts keepPages: [] ──
+test("P20: finish rejects conflicting keep inputs and accepts an explicit empty keepPages", async () => {
+	const dump = scratchPath("p20.dump");
+	const conflict = await run(
+		"ego_app_space",
+		{ action: "finish", name: "fake-space", keep: true, keepPages: ["p1"] },
+		{ env: { EGO_FAKE_DUMP: dump } }
+	);
+	assert.equal(conflict.ok, false, JSON.stringify(conflict));
+	assert.match(String(conflict.error ?? ""), /either keep|keepPages already decides/);
+	assert.equal(existsSync(dump), false, "no CLI process may be spawned");
+
+	// An explicit [] means "keep none" — it must not be treated as absent.
+	const emptyKeepPages = await run("ego_app_space", { action: "finish", name: "fake-space", keepPages: [] });
+	assert.equal(emptyKeepPages.ok, true, JSON.stringify(emptyKeepPages));
+});
+
+// ── P21: fn: and expression: are two sources; a dropped one is rejected ──
+test("P21: fn: and expression: are rejected together unless expression: says nothing", async () => {
+	// fn: always wins, so a non-empty expression: used to be dropped without a trace.
+	const dump = scratchPath("p21.dump");
+	const conflict = await run(
+		"ego_app_js",
+		{ name: "fake-space", fn: "(arg) => arg.n", expression: "999", arg: { n: 7 } },
+		{ env: { EGO_FAKE_DUMP: dump } }
+	);
+	assert.equal(conflict.ok, false, JSON.stringify(conflict));
+	assert.match(String(conflict.error ?? ""), /fn: and expression:/);
+	assert.equal(existsSync(dump), false, "no CLI process may be spawned");
+
+	// A comment-only expression: is not a second source, so fn: still runs.
+	const commentOnly = await run("ego_app_js", { name: "fake-space", fn: "(x) => x + 1", expression: "/* nothing */", arg: 1 });
+	assert.equal(commentOnly.ok, true, JSON.stringify(commentOnly));
+	assert.equal(commentOnly.value, 2);
+});
+
+// ── P22: arg is rejected where the source is never called (auto fallback too) ──
+test("P22: arg with an auto statements fallback is rejected, and statements mode keeps its wording", async () => {
+	// No mode: auto could not parse the body as one expression, so it fell back to
+	// statements and arg was silently dropped.
+	const dump = scratchPath("p22.dump");
+	const fallback = await run(
+		"ego_app_js",
+		{ name: "fake-space", expression: "const x = 1; return x;", arg: { k: 1 } },
+		{ env: { EGO_FAKE_DUMP: dump } }
+	);
+	assert.equal(fallback.ok, false, JSON.stringify(fallback));
+	assert.match(String(fallback.error ?? ""), /auto statements fallback/);
+	assert.equal(existsSync(dump), false, "no CLI process may be spawned");
+
+	// A function source in auto mode is called, so arg reaches it.
+	const autoCalled = await run("ego_app_js", { name: "fake-space", expression: "(x) => x * 3", arg: 4 });
+	assert.equal(autoCalled.ok, true, JSON.stringify(autoCalled));
+	assert.equal(autoCalled.value, 12);
+
+	// The explicit-statements message keeps its own wording (not the fallback one).
+	const explicit = await run("ego_app_js", { name: "fake-space", expression: "return 1", mode: "statements", arg: 9 });
+	assert.equal(explicit.ok, false, JSON.stringify(explicit));
+	assert.match(String(explicit.error ?? ""), /arg cannot be used with mode:"statements"/);
+});
+
+// ── P23: a clamped dialog waitMs is echoed, never silently shortened ──
+test("P23: dialog waitMs echoes requested/applied/clamped, and is absent when unset", async () => {
+	// The 30 s cap protects the CLI budget, but a truncated delay must not look honoured.
+	const capped = await run("ego_app_dialog", { action: "accept", name: "fake-space", trigger: "#btn", waitMs: 60000 });
+	assert.equal(capped.ok, true, JSON.stringify(capped));
+	assert.deepEqual(capped.waitMs, { requested: 60000, applied: 30000, clamped: true });
+
+	// Under the cap, requested and applied agree and clamped is false.
+	const honoured = await run("ego_app_dialog", { action: "accept", name: "fake-space", trigger: "#btn", waitMs: 500 });
+	assert.equal(honoured.ok, true, JSON.stringify(honoured));
+	assert.deepEqual(honoured.waitMs, { requested: 500, applied: 500, clamped: false });
+
+	// The default 400 ms is not a caller-visible value, so there is nothing to echo.
+	const defaulted = await run("ego_app_dialog", { action: "accept", name: "fake-space" });
+	assert.equal(defaulted.ok, true, JSON.stringify(defaulted));
+	assert.equal("waitMs" in defaulted, false, "waitMs is only echoed when the caller passed it");
+});
+
+// ── P24: select's index must not silently override label/value ──
+test("P24: select rejects index combined with label/value", async () => {
+	for (const extra of [{ label: "Foo" }, { value: "bar" }]) {
+		const dump = scratchPath("p24.dump");
+		const out = await run("ego_app_select", { name: "fake-space", selector: "#s", index: 0, ...extra }, { env: { EGO_FAKE_DUMP: dump } });
+		assert.equal(out.ok, false, JSON.stringify(extra) + " -> " + JSON.stringify(out));
+		assert.match(String(out.error ?? ""), /index cannot be combined/);
+		assert.equal(existsSync(dump), false, "no CLI process may be spawned: " + JSON.stringify(extra));
+	}
+	// The documented label-wins-over-value pair is unchanged.
+	const labelWins = await run("ego_app_select", { name: "fake-space", selector: "#s", label: "Foo", value: "bar" });
+	assert.equal(labelWins.ok, true, JSON.stringify(labelWins));
+	const byIndex = await run("ego_app_select", { name: "fake-space", selector: "#s", index: 0 });
+	assert.equal(byIndex.ok, true, JSON.stringify(byIndex));
+});
+
+// ── P25: an invalid wait_event name is named before the parameter allow-list ──
+test("P25: wait_event validates the event name before reporting unused parameters", async () => {
+	const dump = scratchPath("p25.dump");
+	const out = await run("ego_app_page", { name: "fake-space", action: "wait_event", event: "bogus", saveAs: "C:/x.png" }, { env: { EGO_FAKE_DUMP: dump } });
+	assert.equal(out.ok, false, JSON.stringify(out));
+	assert.match(String(out.error ?? ""), /only supports the "popup" and "download"/);
+	assert.equal(existsSync(dump), false, "no CLI process may be spawned");
+});
